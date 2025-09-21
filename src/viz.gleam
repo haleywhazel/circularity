@@ -1,4 +1,5 @@
 import components/flow_map
+import components/resource_pooling
 
 import lustre
 import lustre/attribute.{attribute, class}
@@ -11,6 +12,7 @@ import lustre/event
 pub fn main() {
   let app = lustre.simple(init, update, view)
   let assert Ok(_) = flow_map.register()
+  let assert Ok(_) = resource_pooling.register()
   let assert Ok(_) = lustre.start(app, "body", Nil)
   Nil
 }
@@ -21,7 +23,7 @@ type Model {
 }
 
 fn init(_) {
-  Model("Flow Map", True)
+  Model("Resource Pooling", True)
 }
 
 // Update
@@ -41,7 +43,7 @@ fn update(model: Model, message: Message) -> Model {
 
 // View
 fn view(model) {
-  html.div([class("h-screen flex bg-gray-200")], [
+  html.div([class("min-h-screen flex bg-gray-200 overflow-auto")], [
     html.nav(
       [
         nav_class(model),
@@ -92,7 +94,12 @@ fn view(model) {
     ),
     html.div([class("flex flex-col p-12 flex-1 min-w-0")], [
       html.h1([class("text-4xl font-extrabold")], [text(model.page)]),
-      html.div([class("flex-1 w-full py-4")], [render_content(model)]),
+      html.div([class("flex-1 w-full py-4")], [
+        html.div([content_class(model, "Flow Map")], [flow_map.element()]),
+        html.div([content_class(model, "Resource Pooling")], [
+          resource_pooling.element(),
+        ]),
+      ]),
     ]),
   ])
 }
@@ -100,7 +107,7 @@ fn view(model) {
 // Helper
 fn nav_class(model: Model) {
   let base_class =
-    "bg-gray-900 text-gray-200 flex flex-col py-12 transition-all duration-300 ease-in-out"
+    "bg-gray-900 text-gray-200 flex flex-col py-12 transition-all duration-300 ease-in-out flex-shrink-0"
   class(case model.show_menu {
     True -> base_class <> " w-64 px-4"
     False -> base_class <> " w-16 px-2"
@@ -123,10 +130,9 @@ fn link_class(label: String, model: Model) {
   })
 }
 
-fn render_content(model: Model) {
-  case model.page {
-    "Flow Map" -> flow_map.element()
-    "Resource Pooling" -> text("Resource Pooling component here")
-    _ -> html.div([], [text("Unknown component")])
-  }
+fn content_class(model: Model, component: String) {
+  class(case model.page == component {
+    True -> "w-full h-full"
+    False -> "hidden"
+  })
 }

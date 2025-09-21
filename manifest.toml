@@ -47,6 +47,7 @@ packages = [
 
 [requirements]
 formal = { version = ">= 3.0.0 and < 4.0.0" }
+gleam_json = { version = ">= 3.0.2 and < 4.0.0" }
 gleam_stdlib = { version = ">= 0.44.0 and < 2.0.0" }
 gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 keyboard_shortcuts = { version = ">= 0.9.1 and < 1.0.0" }

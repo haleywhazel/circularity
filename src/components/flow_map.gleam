@@ -43,6 +43,7 @@ type Model {
     nodes: List(Node),
     paths: List(Path),
     selected_coords: Option(#(Float, Float)),
+    selected_node: Option(String),
   )
 }
 
@@ -70,8 +71,8 @@ fn init(_) -> #(Model, Effect(Message)) {
       dispatch
       |> install_keyboard_shortcuts(KeyDown, [
         Shortcut([Key("Escape")], ResetForm, [PreventDefault]),
-        Shortcut([Modifier, Key("a")], StartNodeForm(""), [PreventDefault]),
-        Shortcut([Modifier, Key("p")], StartPathForm(""), [PreventDefault]),
+        // Shortcut([Modifier, Key("a")], StartNodeForm(""), [PreventDefault]),
+        // Shortcut([Modifier, Key("p")], StartPathForm(""), [PreventDefault]),
         Shortcut([Modifier, Key("z")], Undo, [PreventDefault]),
       ])
     })
@@ -86,6 +87,7 @@ fn init(_) -> #(Model, Effect(Message)) {
       nodes: [],
       paths: [],
       selected_coords: None,
+      selected_node: None,
     ),
     init_effect,
   )
@@ -109,7 +111,6 @@ type Message {
 }
 
 fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
-  inspect(message)
   case message {
     SelectCoords(lat, lon) -> {
       let updated_model = Model(..model, selected_coords: Some(#(lat, lon)))
@@ -158,10 +159,13 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
             }
             _, _ -> model.form
           }
-          #(Model(..model, form: updated_form), effect.none())
+          #(
+            Model(..model, form: updated_form, selected_node: None),
+            effect.none(),
+          )
         }
         _ -> #(
-          model,
+          Model(..model, selected_node: Some(node_id)),
           effect.from(fn(dispatch) { dispatch(StartNodeForm(node_id)) }),
         )
       }
@@ -175,6 +179,7 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
               ..updated_model,
               form: edit_node_form(node),
               current_form: EditNodeForm(node.node_id),
+              selected_node: Some(node.node_id),
             )
           add_node(node.node_id, lat, lon, "")
           focus_root_by_id("flow-map", "node_label")
@@ -201,6 +206,7 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
               ..model,
               form: edit_node_form(node),
               current_form: EditNodeForm(node.node_id),
+              selected_node: Some(node.node_id),
             )
           #(updated_model, effect.none())
         }
@@ -222,7 +228,10 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
               case node_label {
                 "" -> {
                   focus_root_by_id("flow-map", "node_label")
-                  #(updated_model, effect.none())
+                  #(
+                    Model(..updated_model, selected_node: Some(node_id)),
+                    effect.none(),
+                  )
                 }
                 _ -> {
                   #(reset_form(updated_model), effect.none())
@@ -275,9 +284,25 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
       }
     }
     StartPathForm("") -> {
-      let updated_model =
-        Model(..model, form: new_path_form(), current_form: NewPathForm)
-      #(updated_model, effect.none())
+      case model.selected_node {
+        Some(node_id) -> {
+          let path_with_origin_node_id =
+            new_path_form()
+            |> form.set_values([#("origin_node_id", node_id)])
+          let updated_model =
+            Model(
+              ..model,
+              form: path_with_origin_node_id,
+              current_form: NewPathForm,
+            )
+          #(updated_model, effect.none())
+        }
+        None -> {
+          let updated_model =
+            Model(..model, form: new_path_form(), current_form: NewPathForm)
+          #(updated_model, effect.none())
+        }
+      }
     }
     StartPathForm(path_id) -> {
       let path =
@@ -370,10 +395,10 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
         }
         [EditNode(original, _), ..rest_actions] -> {
           let updated_nodes =
-            list.map(model.nodes, fn(n) {
-              case n.node_id == original.node_id {
+            list.map(model.nodes, fn(node) {
+              case node.node_id == original.node_id {
                 True -> original
-                False -> n
+                False -> node
               }
             })
           let updated_model =
@@ -412,7 +437,6 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
           #(updated_model, effect.none())
         }
         [NewPath(path), ..rest_actions] -> {
-          // Add this
           let updated_paths =
             list.filter(model.paths, fn(p) { p.path_id != path.path_id })
           let updated_model =
@@ -443,7 +467,6 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
           #(updated_model, effect.none())
         }
         [RemovePath(path), ..rest_actions] -> {
-          // Add this
           let updated_model =
             Model(..model, paths: [path, ..model.paths], actions: rest_actions)
             |> reset_form()
@@ -460,7 +483,9 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
       }
     }
     ResetForm -> {
-      let updated_model = reset_form(model)
+      let updated_model =
+        Model(..model, selected_node: None)
+        |> reset_form()
       remove_temp_node()
       #(updated_model, effect.none())
     }
