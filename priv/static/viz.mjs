@@ -1976,6 +1976,9 @@ function decode_bool(data) {
 function decode_int(data) {
   return run_dynamic_function(data, "Int", int);
 }
+function decode_float(data) {
+  return run_dynamic_function(data, "Float", float);
+}
 function failure(zero, expected) {
   return new Decoder((d) => {
     return [zero, decode_error(expected, d)];
@@ -1983,6 +1986,7 @@ function failure(zero, expected) {
 }
 var bool = /* @__PURE__ */ new Decoder(decode_bool);
 var int2 = /* @__PURE__ */ new Decoder(decode_int);
+var float2 = /* @__PURE__ */ new Decoder(decode_float);
 function decode_string(data) {
   return run_dynamic_function(data, "String", string);
 }
@@ -2251,8 +2255,8 @@ function classify_dynamic(data) {
 function inspect(v) {
   return new Inspector().inspect(v);
 }
-function float_to_string(float2) {
-  const string5 = float2.toString().replace("+", "");
+function float_to_string(float4) {
+  const string5 = float4.toString().replace("+", "");
   if (string5.indexOf(".") >= 0) {
     return string5;
   } else {
@@ -2457,6 +2461,10 @@ function list(data, decode2, pushPath, index4, emptyList) {
     index4++;
   }
   return [List.fromArray(decoded), emptyList];
+}
+function float(data) {
+  if (typeof data === "number") return new Ok(data);
+  return new Error(0);
 }
 function int(data) {
   if (Number.isInteger(data)) return new Ok(data);
@@ -2665,6 +2673,9 @@ function bool2(input2) {
   return identity3(input2);
 }
 function int3(input2) {
+  return identity3(input2);
+}
+function float3(input2) {
   return identity3(input2);
 }
 function object2(entries) {
@@ -6724,6 +6735,125 @@ function removeTempNode() {
     flowMap.tempNode = null;
   }
 }
+function downloadModelData(gleamJsonData) {
+  const gleamState = JSON.parse(gleamJsonData);
+  const d3State = {
+    nodes: [],
+    paths: []
+  };
+  if (flowMap.nodesList) {
+    flowMap.nodesList.selectAll(".node").each(function() {
+      const nodeElement = d3.select(this);
+      const nodeId = nodeElement.attr("id");
+      const transform = nodeElement.attr("transform");
+      const match = transform.match(/translate\(([^,]+),([^)]+)\)/);
+      if (match && flowMap.projection) {
+        const x = parseFloat(match[1]);
+        const y = parseFloat(match[2]);
+        const [lon, lat] = flowMap.projection.invert([x, y]);
+        const labelGroup = nodeElement.select(".label-group");
+        const labelText = labelGroup.select("text");
+        const labelDx = parseFloat(labelText.attr("dx")) || 0;
+        const labelDy = parseFloat(labelText.attr("dy")) || -6;
+        d3State.nodes.push({
+          id: nodeId,
+          lat,
+          lon,
+          x,
+          y,
+          labelDx,
+          labelDy
+        });
+      }
+    });
+  }
+  if (flowMap.pathsList) {
+    flowMap.pathsList.selectAll(".flow").each(function() {
+      const pathElement = d3.select(this);
+      const pathId = pathElement.attr("id");
+      d3State.paths.push({
+        id: pathId
+      });
+    });
+  }
+  const combinedData = {
+    gleam_state: gleamState,
+    d3_state: d3State
+  };
+  const jsonData = JSON.stringify(combinedData, null, 2);
+  const blob = new Blob([jsonData], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a2 = document.createElement("a");
+  a2.href = url;
+  a2.download = `flow-map-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a2);
+  a2.click();
+  document.body.removeChild(a2);
+  URL.revokeObjectURL(url);
+}
+function setupFileImport(dispatch) {
+  requestAnimationFrame(() => {
+    const shadowRoot = document.querySelector("flow-map").shadowRoot;
+    const fileInput = shadowRoot.querySelector("#import-file");
+    if (!fileInput) {
+      setupFileImport(dispatch);
+      return;
+    }
+    fileInput.addEventListener("change", (event4) => {
+      const file = event4.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const combinedData = JSON.parse(e.target.result);
+            if (combinedData.d3_state && combinedData.gleam_state) {
+              window.pendingD3State = combinedData.d3_state;
+              dispatch(`import:${JSON.stringify(combinedData.gleam_state)}`);
+            } else {
+              console.error("Invalid file format");
+            }
+          } catch (error) {
+            console.error("Failed to parse import file:", error);
+          }
+        };
+        reader.readAsText(file);
+      }
+    });
+  });
+}
+function restoreD3StateAfterImport(nodes2, paths) {
+  if (!window.pendingD3State) return;
+  const d3State = window.pendingD3State;
+  clearFlowMap();
+  nodes2.toArray().forEach((node) => {
+    const nodeState = d3State.nodes.find((n) => n.id === node.node_id);
+    addNode(node.node_id, node.lat, node.lon, node.node_label);
+    if (nodeState && (nodeState.labelDx !== 0 || nodeState.labelDy !== -6)) {
+      requestAnimationFrame(() => {
+        const nodeElement = flowMap.nodesList.select(`#${node.node_id}`);
+        if (!nodeElement.empty()) {
+          const labelGroup = nodeElement.select(".label-group");
+          const labelText = labelGroup.select("text");
+          const rect = labelGroup.select("rect");
+          labelText.attr("dx", nodeState.labelDx).attr("dy", nodeState.labelDy);
+          if (!rect.empty()) {
+            const bbox = labelText.node().getBBox();
+            rect.attr("x", bbox.x - 1).attr("y", bbox.y - 1).attr("width", bbox.width + 2).attr("height", bbox.height + 2);
+          }
+        }
+      });
+    }
+  });
+  paths.toArray().forEach((path2) => {
+    addPath(
+      path2.path_id,
+      path2.origin_node_id,
+      path2.destination_node_id,
+      path2.value
+    );
+  });
+  delete window.pendingD3State;
+}
 function createNodeGroup(nodeId, x, y) {
   ensureNodesGroup();
   return flowMap.nodesList.append("g").attr("class", "node").attr("id", nodeId).attr("transform", `translate(${x}, ${y})`);
@@ -7106,6 +7236,14 @@ function calculateDistance(source, target) {
   const dy = target.y - source.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
+function clearFlowMap() {
+  if (flowMap.g) {
+    flowMap.g.selectAll(".node").remove();
+    flowMap.g.selectAll(".flow").remove();
+    flowMap.bundleData = { nodes: [], links: [], paths: [] };
+    stopForceLayout();
+  }
+}
 function createMap() {
   const shadowRoot = document.querySelector("flow-map").shadowRoot;
   const flowMapDiv = shadowRoot.getElementById("flow-map");
@@ -7252,6 +7390,14 @@ var DeletePath = class extends CustomType {
 var Undo = class extends CustomType {
 };
 var ResetForm = class extends CustomType {
+};
+var DownloadModel = class extends CustomType {
+};
+var ImportModel = class extends CustomType {
+  constructor(json_data) {
+    super();
+    this.json_data = json_data;
+  }
 };
 var Node = class extends CustomType {
   constructor(node_id, lat, lon, node_label) {
@@ -7401,6 +7547,35 @@ function update_existing_node(model, node_id, lat, lon, node_label) {
     }
   );
 }
+function node_decoder() {
+  return field(
+    "node_id",
+    string2,
+    (node_id) => {
+      return field(
+        "lat",
+        float2,
+        (lat) => {
+          return field(
+            "lon",
+            float2,
+            (lon) => {
+              return field(
+                "node_label",
+                string2,
+                (node_label) => {
+                  return success(
+                    new Node(node_id, lat, lon, node_label)
+                  );
+                }
+              );
+            }
+          );
+        }
+      );
+    }
+  );
+}
 function create_new_path(model, origin_node_id, destination_node_id, value2) {
   let path_id = "path-id-" + to_string(model.next_path_id);
   let path2 = new Path(path_id, origin_node_id, destination_node_id, value2);
@@ -7466,9 +7641,82 @@ function update_existing_path(model, path_id, origin_node_id, destination_node_i
     }
   );
 }
+function path_decoder() {
+  return field(
+    "path_id",
+    string2,
+    (path_id) => {
+      return field(
+        "origin_node_id",
+        string2,
+        (origin_node_id) => {
+          return field(
+            "destination_node_id",
+            string2,
+            (destination_node_id) => {
+              return field(
+                "value",
+                float2,
+                (value2) => {
+                  return success(
+                    new Path(
+                      path_id,
+                      origin_node_id,
+                      destination_node_id,
+                      value2
+                    )
+                  );
+                }
+              );
+            }
+          );
+        }
+      );
+    }
+  );
+}
 function empty_form() {
   let _pipe = success2(new EmptyForm());
   return new$8(_pipe);
+}
+function model_decoder() {
+  return field(
+    "nodes",
+    list2(node_decoder()),
+    (nodes2) => {
+      return field(
+        "paths",
+        list2(path_decoder()),
+        (paths) => {
+          return field(
+            "next_node_id",
+            int2,
+            (next_node_id) => {
+              return field(
+                "next_path_id",
+                int2,
+                (next_path_id) => {
+                  return success(
+                    new Model(
+                      empty_form(),
+                      new NoForm(),
+                      toList([]),
+                      next_node_id,
+                      next_path_id,
+                      nodes2,
+                      paths,
+                      new None(),
+                      new None()
+                    )
+                  );
+                }
+              );
+            }
+          );
+        }
+      );
+    }
+  );
 }
 function reset_form(model) {
   return new Model(
@@ -7809,6 +8057,41 @@ function render_delete_button(current_form) {
     );
   }
 }
+function render_import_export_buttons() {
+  return div(
+    toList([class$("flex-1 mb-2")]),
+    toList([
+      button(
+        toList([
+          class$(
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer"
+          ),
+          on_click(new DownloadModel())
+        ]),
+        toList([text2("Download")])
+      ),
+      label(
+        toList([
+          class$(
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block"
+          ),
+          for$("import-file")
+        ]),
+        toList([
+          text2("Import"),
+          input(
+            toList([
+              id("import-file"),
+              type_("file"),
+              accept(toList([".json"])),
+              class$("hidden")
+            ])
+          )
+        ])
+      )
+    ])
+  );
+}
 function render_controls(model) {
   return div(
     toList([
@@ -7817,6 +8100,7 @@ function render_controls(model) {
       )
     ]),
     toList([
+      render_import_export_buttons(),
       button(
         toList([
           class$(
@@ -7925,6 +8209,40 @@ function parse_coords(coords) {
     }
   }
 }
+function serialise_node(node) {
+  return object2(
+    toList([
+      ["node_id", string3(node.node_id)],
+      ["lat", float3(node.lat)],
+      ["lon", float3(node.lon)],
+      ["node_label", string3(node.node_label)]
+    ])
+  );
+}
+function serialise_path(path2) {
+  return object2(
+    toList([
+      ["path_id", string3(path2.path_id)],
+      ["origin_node_id", string3(path2.origin_node_id)],
+      ["destination_node_id", string3(path2.destination_node_id)],
+      ["value", float3(path2.value)]
+    ])
+  );
+}
+function serialise_model(model) {
+  let _pipe = object2(
+    toList([
+      ["nodes", array2(model.nodes, serialise_node)],
+      ["paths", array2(model.paths, serialise_path)],
+      ["next_node_id", int3(model.next_node_id)],
+      ["next_path_id", int3(model.next_path_id)]
+    ])
+  );
+  return to_string2(_pipe);
+}
+function deserialise_model(json_data) {
+  return parse(json_data, model_decoder());
+}
 function init(_) {
   let init_effect = from(
     (dispatch) => {
@@ -7946,11 +8264,15 @@ function init(_) {
           } else {
             return void 0;
           }
+        } else if (message.startsWith("import:")) {
+          let json_data = message.slice(7);
+          return dispatch(new ImportModel(json_data));
         } else {
           return void 0;
         }
       };
       setDispatch(dispatch_wrapper);
+      setupFileImport(dispatch_wrapper);
       let _pipe = dispatch;
       return install_keyboard_shortcuts(
         _pipe,
@@ -8675,7 +8997,7 @@ function update2(model, message) {
         return [updated_model, none()];
       }
     }
-  } else {
+  } else if (message instanceof ResetForm) {
     let _block;
     let _pipe = new Model(
       model.form,
@@ -8692,6 +9014,27 @@ function update2(model, message) {
     let updated_model = _block;
     removeTempNode();
     return [updated_model, none()];
+  } else if (message instanceof DownloadModel) {
+    let model_data = serialise_model(model);
+    downloadModelData(model_data);
+    return [model, none()];
+  } else {
+    let json_data = message.json_data;
+    let $ = deserialise_model(json_data);
+    if ($ instanceof Ok) {
+      let imported_model = $[0];
+      let recreation_effect = from(
+        (_) => {
+          return restoreD3StateAfterImport(
+            imported_model.nodes,
+            imported_model.paths
+          );
+        }
+      );
+      return [imported_model, recreation_effect];
+    } else {
+      return [model, none()];
+    }
   }
 }
 function register() {
@@ -8739,7 +9082,8 @@ var CONFIG2 = {
   columnGap: 20,
   itemsPerActivityColumn: 3,
   itemsPerMaterialColumn: 5,
-  entityMargin: 40
+  entityMargin: 40,
+  flowHoverWidth: 8
 };
 var resourcePooling = {
   svg: null,
@@ -8851,10 +9195,25 @@ function createFlow(flow) {
   flowTypes.forEach((flowType, index4) => {
     createSingleFlow(flowGroup, entity1Bounds, entity2Bounds, flowType, index4);
   });
+  setupFlowInteraction(flowGroup, flowId);
   addFlowToSimulation(flowId, entityId1, entityId2, flow);
   return flowGroup;
 }
-function downloadModelData(gleamJsonData) {
+function editFlow(flow) {
+  if (!resourcePooling.g) return;
+  deleteFlow(flow.flow_id);
+  createFlow(flow);
+}
+function deleteFlow(flowId) {
+  if (!resourcePooling.g) return;
+  resourcePooling.g.select(`#${flowId}`).remove();
+  const linkIndex = links.findIndex((l) => l.id === flowId);
+  if (linkIndex >= 0) {
+    links.splice(linkIndex, 1);
+    updateSimulation();
+  }
+}
+function downloadModelData2(gleamJsonData) {
   const gleamState = JSON.parse(gleamJsonData);
   const d3State = {
     nodes: nodes.map((node) => ({
@@ -8885,12 +9244,12 @@ function downloadModelData(gleamJsonData) {
   document.body.removeChild(a2);
   URL.revokeObjectURL(url);
 }
-function setupFileImport(dispatch) {
+function setupFileImport2(dispatch) {
   requestAnimationFrame(() => {
     const shadowRoot = document.querySelector("resource-pooling").shadowRoot;
     const fileInput = shadowRoot.querySelector("#import-file");
     if (!fileInput) {
-      setupFileImport(dispatch);
+      setupFileImport2(dispatch);
       return;
     }
     fileInput.addEventListener("change", (event4) => {
@@ -8915,7 +9274,7 @@ function setupFileImport(dispatch) {
     });
   });
 }
-function restoreD3StateAfterImport(entities, materials, flows) {
+function restoreD3StateAfterImport2(entities, materials, flows) {
   if (!window.pendingD3State) return;
   const d3State = window.pendingD3State;
   clearResourcePooling();
@@ -9226,10 +9585,20 @@ function createSingleFlow(flowGroup, entity1Bounds, entity2Bounds, flowType, ind
   );
   const pathData = createCurvedPath(startPoint, endPoint);
   const color = FLOW_COLORS[flowType.flow_category] || "#666";
-  const flowPath = flowGroup.append("path").attr("class", "flow-path").attr("d", pathData).style("fill", "none").style("stroke", color).style("stroke-width", 1).style("stroke-dasharray", flowType.is_future ? "5,5" : "none");
+  const hoverPath = flowGroup.append("path").attr("class", "flow-hover").attr("d", pathData).style("fill", "none").style("stroke", "transparent").style("stroke-width", CONFIG2.flowHoverWidth).style("cursor", "pointer");
+  const flowPath = flowGroup.append("path").attr("class", "flow-path").attr("d", pathData).style("fill", "none").style("stroke", color).style("stroke-width", 1).style("stroke-dasharray", flowType.is_future ? "5,5" : "none").style("pointer-events", "none");
   setupFlowArrows(flowPath, flowType);
   flowPath.datum({ flowType, index: index4 });
-  return flowPath;
+  hoverPath.datum({ flowType, index: index4 });
+  return { hoverPath, flowPath };
+}
+function setupFlowInteraction(flowGroup, flowId) {
+  flowGroup.on("click", function(event4) {
+    event4.stopPropagation();
+    if (messageDispatch2) {
+      messageDispatch2("flow_id:" + flowId);
+    }
+  });
 }
 function setupFlowArrows(flowPath, flowType) {
   const defs = getOrCreateDefs();
@@ -9401,7 +9770,7 @@ function updateFlowPath(flowElement, sourceNode, targetNode) {
     centerX: targetNode.x + (targetNode.width || 150) / 2,
     centerY: targetNode.y + (targetNode.height || 100) / 2
   };
-  flowElement.selectAll(".flow-path").each(function(d, i) {
+  flowElement.selectAll(".flow-path, .flow-hover").each(function(d, i) {
     const pathElement = d3.select(this);
     const flowData = pathElement.datum();
     const flowType = flowData?.flowType || null;
@@ -9590,9 +9959,21 @@ var ToggleFlowType = class extends CustomType {
     this.flow_type = flow_type;
   }
 };
-var DownloadModel = class extends CustomType {
+var ToggleFutureState = class extends CustomType {
+  constructor(flow_type) {
+    super();
+    this.flow_type = flow_type;
+  }
 };
-var ImportModel = class extends CustomType {
+var DeleteFlow = class extends CustomType {
+  constructor(flow_id) {
+    super();
+    this.flow_id = flow_id;
+  }
+};
+var DownloadModel2 = class extends CustomType {
+};
+var ImportModel2 = class extends CustomType {
   constructor(json_data) {
     super();
     this.json_data = json_data;
@@ -9642,6 +10023,12 @@ var EditEntityForm = class extends CustomType {
 var MaterialsForm = class extends CustomType {
 };
 var NewFlowForm = class extends CustomType {
+};
+var EditFlowForm = class extends CustomType {
+  constructor(flow_id) {
+    super();
+    this.flow_id = flow_id;
+  }
 };
 var NoForm2 = class extends CustomType {
 };
@@ -9801,6 +10188,74 @@ function material_decoder() {
     }
   );
 }
+function get_flow_by_id(model, flow_id) {
+  return find2(model.flows, (flow) => {
+    return flow.flow_id === flow_id;
+  });
+}
+function update_existing_flow(model, flow_id, entity_id_1, entity_id_2, material_flow, material_direction, material_future, financial_flow, financial_direction, financial_future, information_flow, information_direction, information_future) {
+  return try$(
+    get_flow_by_id(model, flow_id),
+    (original_flow) => {
+      let updated_flow = new Flow(
+        original_flow.flow_id,
+        [entity_id_1, entity_id_2],
+        (() => {
+          let _pipe = filter(
+            toList([
+              [material_flow, material_direction, material_future, "Material"],
+              [
+                financial_flow,
+                financial_direction,
+                financial_future,
+                "Financial"
+              ],
+              [
+                information_flow,
+                information_direction,
+                information_future,
+                "Information"
+              ]
+            ]),
+            (t) => {
+              return t[0] === "on";
+            }
+          );
+          return map(
+            _pipe,
+            (t) => {
+              return new FlowType(t[3], t[1], t[2]);
+            }
+          );
+        })()
+      );
+      let updated_flows = map(
+        model.flows,
+        (flow) => {
+          let $ = flow.flow_id === flow_id;
+          if ($) {
+            return updated_flow;
+          } else {
+            return flow;
+          }
+        }
+      );
+      let updated_model = new Model2(
+        model.materials,
+        model.entities,
+        updated_flows,
+        model.form,
+        model.current_form,
+        model.next_material_id,
+        model.next_entity_id,
+        model.next_flow_id,
+        model.selected_material_ids,
+        model.value_activities
+      );
+      return new Ok([updated_flow, updated_model]);
+    }
+  );
+}
 function flow_type_decoder() {
   return field(
     "flow_category",
@@ -9947,7 +10402,8 @@ function new_flow_form(model) {
           }
         };
         let validate_combination_does_not_exist = (entity_id_2) => {
-          let $ = (() => {
+          let $ = model.current_form;
+          let $1 = (() => {
             let _pipe = filter(
               model.flows,
               (flow) => {
@@ -9959,7 +10415,9 @@ function new_flow_form(model) {
             );
             return length(_pipe);
           })();
-          if ($ === 0) {
+          if ($ instanceof EditFlowForm) {
+            return new Ok(entity_id_2);
+          } else if ($1 === 0) {
             return new Ok(entity_id_2);
           } else {
             return new Error("entity combination exists");
@@ -10090,6 +10548,180 @@ function edit_entity_form(entity) {
     _pipe,
     toList([["name", entity.name], ["entity-type", entity.entity_type]])
   );
+}
+function edit_flow_form(flow, model) {
+  let model$1 = new Model2(
+    model.materials,
+    model.entities,
+    model.flows,
+    model.form,
+    new EditFlowForm(flow.flow_id),
+    model.next_material_id,
+    model.next_entity_id,
+    model.next_flow_id,
+    model.selected_material_ids,
+    model.value_activities
+  );
+  let _block;
+  let $ = find2(
+    flow.flow_types,
+    (ft) => {
+      return ft.flow_category === "Material";
+    }
+  );
+  if ($ instanceof Ok) {
+    _block = "on";
+  } else {
+    _block = "";
+  }
+  let material_flow = _block;
+  let _block$1;
+  let $1 = find2(
+    flow.flow_types,
+    (ft) => {
+      return ft.flow_category === "Financial";
+    }
+  );
+  if ($1 instanceof Ok) {
+    _block$1 = "on";
+  } else {
+    _block$1 = "";
+  }
+  let financial_flow = _block$1;
+  let _block$2;
+  let $2 = find2(
+    flow.flow_types,
+    (ft) => {
+      return ft.flow_category === "Information";
+    }
+  );
+  if ($2 instanceof Ok) {
+    _block$2 = "on";
+  } else {
+    _block$2 = "";
+  }
+  let information_flow = _block$2;
+  let _block$3;
+  let $3 = find2(
+    flow.flow_types,
+    (ft) => {
+      return ft.flow_category === "Material";
+    }
+  );
+  if ($3 instanceof Ok) {
+    let ft = $3[0];
+    _block$3 = to_string(ft.direction);
+  } else {
+    _block$3 = "1";
+  }
+  let material_direction = _block$3;
+  let _block$4;
+  let $4 = find2(
+    flow.flow_types,
+    (ft) => {
+      return ft.flow_category === "Material";
+    }
+  );
+  if ($4 instanceof Ok) {
+    let ft = $4[0];
+    let $52 = ft.is_future;
+    if ($52) {
+      _block$4 = "on";
+    } else {
+      _block$4 = "";
+    }
+  } else {
+    _block$4 = "";
+  }
+  let material_future = _block$4;
+  let _block$5;
+  let $5 = find2(
+    flow.flow_types,
+    (ft) => {
+      return ft.flow_category === "Financial";
+    }
+  );
+  if ($5 instanceof Ok) {
+    let ft = $5[0];
+    _block$5 = to_string(ft.direction);
+  } else {
+    _block$5 = "1";
+  }
+  let financial_direction = _block$5;
+  let _block$6;
+  let $6 = find2(
+    flow.flow_types,
+    (ft) => {
+      return ft.flow_category === "Financial";
+    }
+  );
+  if ($6 instanceof Ok) {
+    let ft = $6[0];
+    let $72 = ft.is_future;
+    if ($72) {
+      _block$6 = "on";
+    } else {
+      _block$6 = "";
+    }
+  } else {
+    _block$6 = "";
+  }
+  let financial_future = _block$6;
+  let _block$7;
+  let $7 = find2(
+    flow.flow_types,
+    (ft) => {
+      return ft.flow_category === "Information";
+    }
+  );
+  if ($7 instanceof Ok) {
+    let ft = $7[0];
+    _block$7 = to_string(ft.direction);
+  } else {
+    _block$7 = "1";
+  }
+  let information_direction = _block$7;
+  let _block$8;
+  let $8 = find2(
+    flow.flow_types,
+    (ft) => {
+      return ft.flow_category === "Information";
+    }
+  );
+  if ($8 instanceof Ok) {
+    let ft = $8[0];
+    let $9 = ft.is_future;
+    if ($9) {
+      _block$8 = "on";
+    } else {
+      _block$8 = "";
+    }
+  } else {
+    _block$8 = "";
+  }
+  let information_future = _block$8;
+  let base_values = toList([
+    ["entity-id-1", flow.entity_ids[0]],
+    ["entity-id-2", flow.entity_ids[1]],
+    ["material-direction", material_direction],
+    ["financial-direction", financial_direction],
+    ["information-direction", information_direction]
+  ]);
+  let checkbox_values = filter(
+    toList([
+      ["material-flow", material_flow],
+      ["financial-flow", financial_flow],
+      ["information-flow", information_flow],
+      ["material-future", material_future],
+      ["financial-future", financial_future],
+      ["information-future", information_future]
+    ]),
+    (pair) => {
+      return pair[1] === "on";
+    }
+  );
+  let _pipe = new_flow_form(model$1);
+  return set_values(_pipe, append(base_values, checkbox_values));
 }
 function render_input_field2(form3, name2, label2) {
   let errors = field_error_messages(form3, name2);
@@ -10477,13 +11109,36 @@ function render_flow_options(form3, flow_type) {
                   class$(
                     "ml-2 w-1/2 bg-gray-200 text-gray-700 rounded-sm px-2 mt-2"
                   ),
-                  name(flow_type + "-direction"),
-                  value("1")
+                  name(flow_type + "-direction")
                 ]),
                 toList([
-                  option(toList([value("1")]), "1 \u2192 2"),
-                  option(toList([value("-1")]), "2 \u2192 1"),
-                  option(toList([value("0")]), "Bidirectional")
+                  option(
+                    toList([
+                      value("1"),
+                      selected(
+                        field_value(form3, flow_type + "-direction") === "1"
+                      )
+                    ]),
+                    "1 \u2192 2"
+                  ),
+                  option(
+                    toList([
+                      value("-1"),
+                      selected(
+                        field_value(form3, flow_type + "-direction") === "-1"
+                      )
+                    ]),
+                    "2 \u2192 1"
+                  ),
+                  option(
+                    toList([
+                      value("0"),
+                      selected(
+                        field_value(form3, flow_type + "-direction") === "0"
+                      )
+                    ]),
+                    "Bidirectional"
+                  )
                 ])
               )
             ])
@@ -10499,7 +11154,11 @@ function render_flow_options(form3, flow_type) {
                 toList([
                   type_("checkbox"),
                   name(flow_type + "-future"),
-                  class$("ml-2")
+                  class$("ml-2"),
+                  checked(
+                    field_value(form3, flow_type + "-future") === "on"
+                  ),
+                  on_click(new ToggleFutureState(flow_type))
                 ])
               )
             ])
@@ -10590,6 +11249,8 @@ function render_submit_button2(current_form, form_id) {
     _block = "Edit Entity";
   } else if (current_form instanceof NewFlowForm) {
     _block = "Add Flow";
+  } else if (current_form instanceof EditFlowForm) {
+    _block = "Edit Flow";
   } else {
     _block = "";
   }
@@ -10609,45 +11270,14 @@ function render_submit_button2(current_form, form_id) {
     ])
   );
 }
-function render_flow_form(form3, model) {
-  let handle_submit = (values3) => {
-    let _pipe = form3;
-    let _pipe$1 = add_values(_pipe, values3);
-    let _pipe$2 = run2(_pipe$1);
-    return new FlowFormSubmit(_pipe$2);
-  };
-  return div(
-    toList([class$("flex-1 py-2")]),
-    toList([
-      form2(
-        toList([id("flow-form"), on_submit(handle_submit)]),
-        toList([
-          render_entity_select_field(
-            form3,
-            "entity-id-1",
-            "Entity 1",
-            model.entities
-          ),
-          render_entity_select_field(
-            form3,
-            "entity-id-2",
-            "Entity 2",
-            model.entities
-          ),
-          render_flow_options(form3, "material"),
-          render_flow_options(form3, "financial"),
-          render_flow_options(form3, "information"),
-          render_submit_button2(model.current_form, "flow-form")
-        ])
-      )
-    ])
-  );
-}
 function render_delete_button2(current_form) {
   let _block;
   if (current_form instanceof EditEntityForm) {
     let entity_id = current_form.entity_id;
     _block = [new DeleteEntity(entity_id), "Delete Entity"];
+  } else if (current_form instanceof EditFlowForm) {
+    let flow_id = current_form.flow_id;
+    _block = [new DeleteFlow(flow_id), "Delete Flow"];
   } else {
     _block = [new DeleteEntity(""), ""];
   }
@@ -10723,6 +11353,41 @@ function render_entity_form(form3, model) {
     ])
   );
 }
+function render_flow_form(form3, model) {
+  let handle_submit = (values3) => {
+    let _pipe = form3;
+    let _pipe$1 = add_values(_pipe, values3);
+    let _pipe$2 = run2(_pipe$1);
+    return new FlowFormSubmit(_pipe$2);
+  };
+  return div(
+    toList([class$("flex-1 py-2")]),
+    toList([
+      form2(
+        toList([id("flow-form"), on_submit(handle_submit)]),
+        toList([
+          render_entity_select_field(
+            form3,
+            "entity-id-1",
+            "Entity 1",
+            model.entities
+          ),
+          render_entity_select_field(
+            form3,
+            "entity-id-2",
+            "Entity 2",
+            model.entities
+          ),
+          render_flow_options(form3, "material"),
+          render_flow_options(form3, "financial"),
+          render_flow_options(form3, "information"),
+          render_submit_button2(model.current_form, "flow-form"),
+          render_delete_button2(model.current_form)
+        ])
+      )
+    ])
+  );
+}
 function render_form2(model) {
   let $ = model.current_form;
   if ($ instanceof NewEntityForm) {
@@ -10733,27 +11398,29 @@ function render_form2(model) {
     return render_materials_form(model.form, model);
   } else if ($ instanceof NewFlowForm) {
     return render_flow_form(model.form, model);
+  } else if ($ instanceof EditFlowForm) {
+    return render_flow_form(model.form, model);
   } else {
     return none2();
   }
 }
-function render_import_export_buttons() {
+function render_import_export_buttons2() {
   return div(
     toList([class$("flex-1 mb-2")]),
     toList([
       button(
         toList([
           class$(
-            "bg-purple-600 hover:bg-purple-400 px-3 py-2 rounded-sm cursor-pointer"
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer"
           ),
-          on_click(new DownloadModel())
+          on_click(new DownloadModel2())
         ]),
         toList([text2("Download")])
       ),
       label(
         toList([
           class$(
-            "bg-orange-600 hover:bg-orange-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block"
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block"
           ),
           for$("import-file")
         ]),
@@ -10780,7 +11447,7 @@ function render_controls2(model) {
       )
     ]),
     toList([
-      render_import_export_buttons(),
+      render_import_export_buttons2(),
       button(
         toList([
           class$(
@@ -10841,7 +11508,7 @@ function empty_form2() {
   let _pipe = success2(new EmptyForm2());
   return new$8(_pipe);
 }
-function model_decoder() {
+function model_decoder2() {
   return field(
     "materials",
     list2(material_decoder()),
@@ -10950,7 +11617,7 @@ function serialise_flow(flow) {
     ])
   );
 }
-function serialise_model(model) {
+function serialise_model2(model) {
   let _pipe = object2(
     toList([
       ["materials", array2(model.materials, serialise_material)],
@@ -10963,8 +11630,8 @@ function serialise_model(model) {
   );
   return to_string2(_pipe);
 }
-function deserialise_model(json_data) {
-  return parse(json_data, model_decoder());
+function deserialise_model2(json_data) {
+  return parse(json_data, model_decoder2());
 }
 function init2(_) {
   let init_effect = from(
@@ -10976,13 +11643,16 @@ function init2(_) {
           return dispatch(new StartEntityForm(entity_id));
         } else if (message.startsWith("import:")) {
           let json_data = message.slice(7);
-          return dispatch(new ImportModel(json_data));
+          return dispatch(new ImportModel2(json_data));
+        } else if (message.startsWith("flow_id:")) {
+          let flow_id = message.slice(8);
+          return dispatch(new StartFlowForm(flow_id));
         } else {
           return void 0;
         }
       };
       setDispatch2(dispatch_wrapper);
-      return setupFileImport(dispatch_wrapper);
+      return setupFileImport2(dispatch_wrapper);
     }
   );
   return [
@@ -11087,7 +11757,35 @@ function update3(model, message) {
         none()
       ];
     } else {
-      return [model, none()];
+      let flow_id = $;
+      let _block;
+      let _pipe = model;
+      let _pipe$1 = get_flow_by_id(_pipe, flow_id);
+      _block = unwrap(
+        _pipe$1,
+        new Flow("default", ["", ""], toList([]))
+      );
+      let flow = _block;
+      let $1 = flow.flow_id;
+      if ($1 === "default") {
+        return [model, none()];
+      } else {
+        return [
+          new Model2(
+            model.materials,
+            model.entities,
+            model.flows,
+            edit_flow_form(flow, model),
+            new EditFlowForm(flow.flow_id),
+            model.next_material_id,
+            model.next_entity_id,
+            model.next_flow_id,
+            model.selected_material_ids,
+            model.value_activities
+          ),
+          none()
+        ];
+      }
     }
   } else if (message instanceof FlowFormSubmit) {
     let $ = message[0];
@@ -11160,6 +11858,31 @@ function update3(model, message) {
             ),
             none()
           ];
+        } else if ($2 instanceof EditFlowForm) {
+          let flow_id = $2.flow_id;
+          let $3 = update_existing_flow(
+            model,
+            flow_id,
+            entity_id_1,
+            entity_id_2,
+            material_flow,
+            material_direction,
+            material_future,
+            financial_flow,
+            financial_direction,
+            financial_future,
+            information_flow,
+            information_direction,
+            information_future
+          );
+          if ($3 instanceof Ok) {
+            let flow = $3[0][0];
+            let updated_model = $3[0][1];
+            editFlow(flow);
+            return [reset_form2(updated_model), none()];
+          } else {
+            return [model, none()];
+          }
         } else {
           return [model, none()];
         }
@@ -11487,11 +12210,23 @@ function update3(model, message) {
           return entity2.entity_id !== entity_id;
         }
       );
+      let connected_flows = filter(
+        model.flows,
+        (flow) => {
+          return flow.entity_ids[0] === entity_id || flow.entity_ids[1] === entity_id;
+        }
+      );
+      let updated_flows = filter(
+        model.flows,
+        (flow) => {
+          return flow.entity_ids[0] !== entity_id && flow.entity_ids[1] !== entity_id;
+        }
+      );
       let _block;
       let _pipe = new Model2(
         model.materials,
         updated_entities,
-        model.flows,
+        updated_flows,
         model.form,
         model.current_form,
         model.next_material_id,
@@ -11503,56 +12238,74 @@ function update3(model, message) {
       _block = reset_form2(_pipe);
       let updated_model = _block;
       deleteEntity(entity.entity_id);
+      each(
+        connected_flows,
+        (flow) => {
+          return deleteFlow(flow.flow_id);
+        }
+      );
       return [updated_model, none()];
     } else {
       return [model, none()];
     }
   } else if (message instanceof ToggleFlowType) {
     let flow_type = message.flow_type;
-    let other_flow_types = filter(
-      toList(["material", "financial", "information"]),
+    let all_flow_types = toList(["material", "financial", "information"]);
+    let flow_field = flow_type + "-flow";
+    let is_currently_checked = field_value(model.form, flow_field) === "on";
+    let new_form = new_flow_form(model);
+    let base_values = toList([
+      ["entity-id-1", field_value(model.form, "entity-id-1")],
+      ["entity-id-2", field_value(model.form, "entity-id-2")]
+    ]);
+    let flow_values = flat_map(
+      all_flow_types,
       (t) => {
-        return t !== flow_type;
+        let flow_field_name = t + "-flow";
+        let direction_field = t + "-direction";
+        let future_field_name = t + "-future";
+        let future_value = field_value(model.form, future_field_name);
+        let _block;
+        let $ = t === flow_type;
+        if ($) {
+          if (is_currently_checked) {
+            _block = toList([]);
+          } else {
+            _block = toList([[flow_field_name, "on"]]);
+          }
+        } else {
+          let $1 = field_value(model.form, flow_field_name);
+          if ($1 === "on") {
+            _block = toList([[flow_field_name, "on"]]);
+          } else {
+            _block = toList([]);
+          }
+        }
+        let flow_checkbox_value = _block;
+        let direction_values = toList([
+          [direction_field, field_value(model.form, direction_field)]
+        ]);
+        let _block$1;
+        if (future_value === "on") {
+          _block$1 = toList([[future_field_name, "on"]]);
+        } else {
+          _block$1 = toList([]);
+        }
+        let future_values = _block$1;
+        return flatten(
+          toList([flow_checkbox_value, direction_values, future_values])
+        );
       }
     );
+    let all_values = append(base_values, flow_values);
     return [
       new Model2(
         model.materials,
         model.entities,
         model.flows,
         (() => {
-          let _pipe = model.form;
-          return set_values(
-            _pipe,
-            prepend(
-              [
-                flow_type + "-flow",
-                (() => {
-                  let $ = field_value(model.form, flow_type + "-flow");
-                  if ($ === "") {
-                    return "on";
-                  } else {
-                    return "";
-                  }
-                })()
-              ],
-              prepend(
-                ["entity-id-1", field_value(model.form, "entity-id-1")],
-                prepend(
-                  ["entity-id-2", field_value(model.form, "entity-id-2")],
-                  map(
-                    other_flow_types,
-                    (t) => {
-                      return [
-                        t + "-flow",
-                        field_value(model.form, t + "-flow")
-                      ];
-                    }
-                  )
-                )
-              )
-            )
-          );
+          let _pipe = new_form;
+          return set_values(_pipe, all_values);
         })(),
         model.current_form,
         model.next_material_id,
@@ -11563,18 +12316,108 @@ function update3(model, message) {
       ),
       none()
     ];
-  } else if (message instanceof DownloadModel) {
-    let model_data = serialise_model(model);
-    downloadModelData(model_data);
+  } else if (message instanceof ToggleFutureState) {
+    let flow_type = message.flow_type;
+    let all_flow_types = toList(["material", "financial", "information"]);
+    let future_field = flow_type + "-future";
+    let is_currently_checked = field_value(model.form, future_field) === "on";
+    let new_form = new_flow_form(model);
+    let base_values = toList([
+      ["entity-id-1", field_value(model.form, "entity-id-1")],
+      ["entity-id-2", field_value(model.form, "entity-id-2")]
+    ]);
+    let flow_values = flat_map(
+      all_flow_types,
+      (t) => {
+        let flow_field = t + "-flow";
+        let direction_field = t + "-direction";
+        let future_field_name = t + "-future";
+        let future_value = field_value(model.form, future_field_name);
+        let base_flow_values = toList([
+          [flow_field, field_value(model.form, flow_field)],
+          [direction_field, field_value(model.form, direction_field)]
+        ]);
+        let _block;
+        let $ = t === flow_type;
+        if ($) {
+          if (is_currently_checked) {
+            _block = toList([]);
+          } else {
+            _block = toList([[future_field_name, "on"]]);
+          }
+        } else {
+          if (future_value === "on") {
+            _block = toList([[future_field_name, "on"]]);
+          } else {
+            _block = toList([]);
+          }
+        }
+        let future_values = _block;
+        return append(base_flow_values, future_values);
+      }
+    );
+    let all_values = append(base_values, flow_values);
+    return [
+      new Model2(
+        model.materials,
+        model.entities,
+        model.flows,
+        (() => {
+          let _pipe = new_form;
+          return set_values(_pipe, all_values);
+        })(),
+        model.current_form,
+        model.next_material_id,
+        model.next_entity_id,
+        model.next_flow_id,
+        model.selected_material_ids,
+        model.value_activities
+      ),
+      none()
+    ];
+  } else if (message instanceof DeleteFlow) {
+    let flow_id = message.flow_id;
+    let $ = get_flow_by_id(model, flow_id);
+    if ($ instanceof Ok) {
+      let flow = $[0];
+      let updated_flows = filter(
+        model.flows,
+        (f) => {
+          return flow.flow_id !== f.flow_id;
+        }
+      );
+      let _block;
+      let _pipe = new Model2(
+        model.materials,
+        model.entities,
+        updated_flows,
+        model.form,
+        model.current_form,
+        model.next_material_id,
+        model.next_entity_id,
+        model.next_flow_id,
+        model.selected_material_ids,
+        model.value_activities
+      );
+      _block = reset_form2(_pipe);
+      let updated_model = _block;
+      deleteFlow(flow.flow_id);
+      return [updated_model, none()];
+    } else {
+      return [model, none()];
+    }
+  } else if (message instanceof DownloadModel2) {
+    let model_data = serialise_model2(model);
+    downloadModelData2(model_data);
     return [model, none()];
   } else {
     let json_data = message.json_data;
-    let $ = deserialise_model(json_data);
+    let $ = deserialise_model2(json_data);
     if ($ instanceof Ok) {
       let imported_model = $[0];
       let recreation_effect = from(
         (_) => {
-          return restoreD3StateAfterImport(
+          return restoreD3StateAfterImport2(
             imported_model.entities,
             imported_model.materials,
             imported_model.flows

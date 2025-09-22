@@ -9,9 +9,11 @@ import lustre/element.{type Element, text}
 import lustre/element/html
 import lustre/event
 
+import gleam/dynamic/decode
 import gleam/float
 import gleam/int
 import gleam/io
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -62,17 +64,17 @@ fn init(_) -> #(Model, Effect(Message)) {
               Error(_) -> Nil
             }
           }
+          "import:" <> json_data -> dispatch(ImportModel(json_data))
           _ -> Nil
         }
       }
 
       js_dispatch(dispatch_wrapper)
+      setup_file_import(dispatch_wrapper)
 
       dispatch
       |> install_keyboard_shortcuts(KeyDown, [
         Shortcut([Key("Escape")], ResetForm, [PreventDefault]),
-        // Shortcut([Modifier, Key("a")], StartNodeForm(""), [PreventDefault]),
-        // Shortcut([Modifier, Key("p")], StartPathForm(""), [PreventDefault]),
         Shortcut([Modifier, Key("z")], Undo, [PreventDefault]),
       ])
     })
@@ -93,6 +95,24 @@ fn init(_) -> #(Model, Effect(Message)) {
   )
 }
 
+fn model_decoder() {
+  use nodes <- decode.field("nodes", decode.list(node_decoder()))
+  use paths <- decode.field("paths", decode.list(path_decoder()))
+  use next_node_id <- decode.field("next_node_id", decode.int)
+  use next_path_id <- decode.field("next_path_id", decode.int)
+  decode.success(Model(
+    form: empty_form(),
+    current_form: NoForm,
+    actions: [],
+    next_node_id: next_node_id,
+    next_path_id: next_path_id,
+    nodes: nodes,
+    paths: paths,
+    selected_coords: None,
+    selected_node: None,
+  ))
+}
+
 // Update
 type Message {
   // SVG interaction
@@ -108,6 +128,8 @@ type Message {
   DeletePath(path_id: String)
   Undo
   ResetForm
+  DownloadModel
+  ImportModel(json_data: String)
 }
 
 fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
@@ -489,6 +511,26 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
       remove_temp_node()
       #(updated_model, effect.none())
     }
+    DownloadModel -> {
+      let model_data = serialise_model(model)
+      download_model_data(model_data)
+      #(model, effect.none())
+    }
+    ImportModel(json_data) -> {
+      case deserialise_model(json_data) {
+        Ok(imported_model) -> {
+          let recreation_effect =
+            effect.from(fn(_dispatch) {
+              restore_d3_state_after_import(
+                imported_model.nodes,
+                imported_model.paths,
+              )
+            })
+          #(imported_model, recreation_effect)
+        }
+        Error(_) -> #(model, effect.none())
+      }
+    }
     _ -> #(model, effect.none())
   }
 }
@@ -518,6 +560,7 @@ fn render_controls(model: Model) -> Element(Message) {
       ),
     ],
     [
+      render_import_export_buttons(),
       html.button(
         [
           class(
@@ -607,6 +650,19 @@ fn update_existing_node(
   Ok(updated_model)
 }
 
+fn node_decoder() {
+  use node_id <- decode.field("node_id", decode.string)
+  use lat <- decode.field("lat", decode.float)
+  use lon <- decode.field("lon", decode.float)
+  use node_label <- decode.field("node_label", decode.string)
+  decode.success(Node(
+    node_id: node_id,
+    lat: lat,
+    lon: lon,
+    node_label: node_label,
+  ))
+}
+
 // Path helpers
 type Path {
   Path(
@@ -670,6 +726,19 @@ fn update_existing_path(
     ])
 
   Ok(updated_model)
+}
+
+fn path_decoder() {
+  use path_id <- decode.field("path_id", decode.string)
+  use origin_node_id <- decode.field("origin_node_id", decode.string)
+  use destination_node_id <- decode.field("destination_node_id", decode.string)
+  use value <- decode.field("value", decode.float)
+  decode.success(Path(
+    path_id: path_id,
+    origin_node_id: origin_node_id,
+    destination_node_id: destination_node_id,
+    value: value,
+  ))
 }
 
 // Form helpers
@@ -952,6 +1021,37 @@ fn render_delete_button(current_form: FormType) {
   }
 }
 
+fn render_import_export_buttons() {
+  html.div([class("flex-1 mb-2")], [
+    html.button(
+      [
+        class(
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer",
+        ),
+        event.on_click(DownloadModel),
+      ],
+      [text("Download")],
+    ),
+    html.label(
+      [
+        class(
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block",
+        ),
+        attribute.for("import-file"),
+      ],
+      [
+        text("Import"),
+        html.input([
+          id("import-file"),
+          attribute.type_("file"),
+          attribute.accept([".json"]),
+          class("hidden"),
+        ]),
+      ],
+    ),
+  ])
+}
+
 fn parse_coords(coords: String) -> Result(#(Float, Float), String) {
   case string.split(coords, ",") {
     [lat_str, lon_str] -> {
@@ -965,6 +1065,39 @@ fn parse_coords(coords: String) -> Result(#(Float, Float), String) {
     }
     _ -> Error("Invalid coordinate string")
   }
+}
+
+// Serialisation helpers
+fn serialise_node(node: Node) -> json.Json {
+  json.object([
+    #("node_id", json.string(node.node_id)),
+    #("lat", json.float(node.lat)),
+    #("lon", json.float(node.lon)),
+    #("node_label", json.string(node.node_label)),
+  ])
+}
+
+fn serialise_path(path: Path) -> json.Json {
+  json.object([
+    #("path_id", json.string(path.path_id)),
+    #("origin_node_id", json.string(path.origin_node_id)),
+    #("destination_node_id", json.string(path.destination_node_id)),
+    #("value", json.float(path.value)),
+  ])
+}
+
+fn serialise_model(model: Model) -> String {
+  json.object([
+    #("nodes", json.array(model.nodes, serialise_node)),
+    #("paths", json.array(model.paths, serialise_path)),
+    #("next_node_id", json.int(model.next_node_id)),
+    #("next_path_id", json.int(model.next_path_id)),
+  ])
+  |> json.to_string()
+}
+
+fn deserialise_model(json_data: String) -> Result(Model, json.DecodeError) {
+  json.parse(json_data, model_decoder())
 }
 
 // Helper
@@ -1004,6 +1137,15 @@ fn delete_path(path_id: String) -> Nil
 
 @external(javascript, "./../components/flow_map.ffi.mjs", "removeTempNode")
 fn remove_temp_node() -> Nil
+
+@external(javascript, "./../components/flow_map.ffi.mjs", "downloadModelData")
+fn download_model_data(json_data: String) -> Nil
+
+@external(javascript, "./../components/flow_map.ffi.mjs", "setupFileImport")
+fn setup_file_import(dispatch: fn(String) -> Nil) -> Nil
+
+@external(javascript, "./../components/flow_map.ffi.mjs", "restoreD3StateAfterImport")
+fn restore_d3_state_after_import(nodes: List(Node), paths: List(Path)) -> Nil
 
 @external(javascript, "./../components/utils.ffi.mjs", "focusRootById")
 fn focus_root_by_id(root: String, elemnt_id: String) -> Nil

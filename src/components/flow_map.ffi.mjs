@@ -244,6 +244,153 @@ export function removeTempNode() {
   }
 }
 
+export function downloadModelData(gleamJsonData) {
+  const gleamState = JSON.parse(gleamJsonData);
+
+  const d3State = {
+    nodes: [],
+    paths: [],
+  };
+
+  if (flowMap.nodesList) {
+    flowMap.nodesList.selectAll(".node").each(function () {
+      const nodeElement = d3.select(this);
+      const nodeId = nodeElement.attr("id");
+      const transform = nodeElement.attr("transform");
+      const match = transform.match(/translate\(([^,]+),([^)]+)\)/);
+
+      if (match && flowMap.projection) {
+        const x = parseFloat(match[1]);
+        const y = parseFloat(match[2]);
+        const [lon, lat] = flowMap.projection.invert([x, y]);
+
+        const labelGroup = nodeElement.select(".label-group");
+        const labelText = labelGroup.select("text");
+        const labelDx = parseFloat(labelText.attr("dx")) || 0;
+        const labelDy = parseFloat(labelText.attr("dy")) || -6;
+
+        d3State.nodes.push({
+          id: nodeId,
+          lat: lat,
+          lon: lon,
+          x: x,
+          y: y,
+          labelDx: labelDx,
+          labelDy: labelDy,
+        });
+      }
+    });
+  }
+
+  if (flowMap.pathsList) {
+    flowMap.pathsList.selectAll(".flow").each(function () {
+      const pathElement = d3.select(this);
+      const pathId = pathElement.attr("id");
+
+      d3State.paths.push({
+        id: pathId,
+      });
+    });
+  }
+
+  const combinedData = {
+    gleam_state: gleamState,
+    d3_state: d3State,
+  };
+
+  const jsonData = JSON.stringify(combinedData, null, 2);
+  const blob = new Blob([jsonData], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `flow-map-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export function setupFileImport(dispatch) {
+  requestAnimationFrame(() => {
+    const shadowRoot = document.querySelector("flow-map").shadowRoot;
+    const fileInput = shadowRoot.querySelector("#import-file");
+
+    if (!fileInput) {
+      setupFileImport(dispatch);
+      return;
+    }
+
+    fileInput.addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const combinedData = JSON.parse(e.target.result);
+
+            if (combinedData.d3_state && combinedData.gleam_state) {
+              window.pendingD3State = combinedData.d3_state;
+
+              dispatch(`import:${JSON.stringify(combinedData.gleam_state)}`);
+            } else {
+              console.error("Invalid file format");
+            }
+          } catch (error) {
+            console.error("Failed to parse import file:", error);
+          }
+        };
+        reader.readAsText(file);
+      }
+    });
+  });
+}
+
+export function restoreD3StateAfterImport(nodes, paths) {
+  if (!window.pendingD3State) return;
+
+  const d3State = window.pendingD3State;
+
+  clearFlowMap();
+
+  nodes.toArray().forEach((node) => {
+    const nodeState = d3State.nodes.find((n) => n.id === node.node_id);
+    addNode(node.node_id, node.lat, node.lon, node.node_label);
+
+    if (nodeState && (nodeState.labelDx !== 0 || nodeState.labelDy !== -6)) {
+      requestAnimationFrame(() => {
+        const nodeElement = flowMap.nodesList.select(`#${node.node_id}`);
+        if (!nodeElement.empty()) {
+          const labelGroup = nodeElement.select(".label-group");
+          const labelText = labelGroup.select("text");
+          const rect = labelGroup.select("rect");
+
+          labelText.attr("dx", nodeState.labelDx).attr("dy", nodeState.labelDy);
+
+          if (!rect.empty()) {
+            const bbox = labelText.node().getBBox();
+            rect
+              .attr("x", bbox.x - 1)
+              .attr("y", bbox.y - 1)
+              .attr("width", bbox.width + 2)
+              .attr("height", bbox.height + 2);
+          }
+        }
+      });
+    }
+  });
+
+  paths.toArray().forEach((path) => {
+    addPath(
+      path.path_id,
+      path.origin_node_id,
+      path.destination_node_id,
+      path.value,
+    );
+  });
+
+  delete window.pendingD3State;
+}
+
 // ============================================================================
 // NODE MANAGEMENT FUNCTIONS
 // ============================================================================
@@ -903,6 +1050,15 @@ function calculateDistance(source, target) {
   const dx = target.x - source.x;
   const dy = target.y - source.y;
   return Math.sqrt(dx * dx + dy * dy);
+}
+
+function clearFlowMap() {
+  if (flowMap.g) {
+    flowMap.g.selectAll(".node").remove();
+    flowMap.g.selectAll(".flow").remove();
+    flowMap.bundleData = { nodes: [], links: [], paths: [] };
+    stopForceLayout();
+  }
 }
 
 // ============================================================================

@@ -58,6 +58,7 @@ fn init(_) -> #(Model, Effect(Message)) {
         case message {
           "entity_id:" <> entity_id -> dispatch(StartEntityForm(entity_id))
           "import:" <> json_data -> dispatch(ImportModel(json_data))
+          "flow_id:" <> flow_id -> dispatch(StartFlowForm(flow_id))
           _ -> Nil
         }
       }
@@ -122,6 +123,8 @@ type Message {
   DeleteValueActivity(activity: String)
   DeleteEntity(entity_id: String)
   ToggleFlowType(flow_type: String)
+  ToggleFutureState(flow_type: String)
+  DeleteFlow(flow_id: String)
   DownloadModel
   ImportModel(json_data: String)
 }
@@ -175,6 +178,26 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
       ),
       effect.none(),
     )
+    StartFlowForm(flow_id) -> {
+      let flow =
+        model
+        |> get_flow_by_id(flow_id)
+        |> result.unwrap(Flow("default", #("", ""), []))
+
+      case flow.flow_id {
+        "default" -> #(model, effect.none())
+        _ -> {
+          #(
+            Model(
+              ..model,
+              form: edit_flow_form(flow, model),
+              current_form: EditFlowForm(flow.flow_id),
+            ),
+            effect.none(),
+          )
+        }
+      }
+    }
     DeleteMaterial(material_id) -> {
       let updated_materials =
         list.filter(model.materials, fn(material) {
@@ -327,11 +350,23 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
               entity.entity_id != entity_id
             })
 
+          let connected_flows =
+            list.filter(model.flows, fn(flow) {
+              flow.entity_ids.0 == entity_id || flow.entity_ids.1 == entity_id
+            })
+
+          let updated_flows =
+            list.filter(model.flows, fn(flow) {
+              flow.entity_ids.0 != entity_id && flow.entity_ids.1 != entity_id
+            })
+
           let updated_model =
-            Model(..model, entities: updated_entities)
+            Model(..model, entities: updated_entities, flows: updated_flows)
             |> reset_form()
 
           delete_entity(entity.entity_id)
+
+          list.each(connected_flows, fn(flow) { delete_flow(flow.flow_id) })
 
           #(updated_model, effect.none())
         }
@@ -341,30 +376,109 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
       }
     }
     ToggleFlowType(flow_type) -> {
-      let other_flow_types =
-        list.filter(["material", "financial", "information"], fn(t) {
-          t != flow_type
+      let all_flow_types = ["material", "financial", "information"]
+      let flow_field = flow_type <> "-flow"
+      let is_currently_checked =
+        form.field_value(model.form, flow_field) == "on"
+
+      let new_form = new_flow_form(model)
+
+      let base_values = [
+        #("entity-id-1", form.field_value(model.form, "entity-id-1")),
+        #("entity-id-2", form.field_value(model.form, "entity-id-2")),
+      ]
+
+      let flow_values =
+        list.flat_map(all_flow_types, fn(t) {
+          let flow_field_name = t <> "-flow"
+          let direction_field = t <> "-direction"
+          let future_field_name = t <> "-future"
+          let future_value = form.field_value(model.form, future_field_name)
+
+          let flow_checkbox_value = case t == flow_type {
+            True ->
+              case is_currently_checked {
+                True -> []
+                False -> [#(flow_field_name, "on")]
+              }
+            False ->
+              case form.field_value(model.form, flow_field_name) {
+                "on" -> [#(flow_field_name, "on")]
+                _ -> []
+              }
+          }
+
+          let direction_values = [
+            #(direction_field, form.field_value(model.form, direction_field)),
+          ]
+
+          let future_values = case future_value {
+            "on" -> [#(future_field_name, "on")]
+            _ -> []
+          }
+
+          list.flatten([flow_checkbox_value, direction_values, future_values])
         })
+
+      let all_values = list.append(base_values, flow_values)
+
       #(
-        Model(
-          ..model,
-          form: model.form
-            |> form.set_values([
-              #(
-                flow_type <> "-flow",
-                case form.field_value(model.form, flow_type <> "-flow") {
-                  "" -> "on"
-                  _ -> ""
-                },
-              ),
-              #("entity-id-1", form.field_value(model.form, "entity-id-1")),
-              #("entity-id-2", form.field_value(model.form, "entity-id-2")),
-              // update model form with current state of the other flow types
-              ..list.map(other_flow_types, fn(t) {
-                #(t <> "-flow", form.field_value(model.form, t <> "-flow"))
-              })
-            ]),
-        ),
+        Model(..model, form: new_form |> form.set_values(all_values)),
+        effect.none(),
+      )
+    }
+    ToggleFutureState(flow_type) -> {
+      let all_flow_types = ["material", "financial", "information"]
+      let future_field = flow_type <> "-future"
+      let is_currently_checked =
+        form.field_value(model.form, future_field) == "on"
+
+      // Create new form and set all values explicitly
+      let new_form = new_flow_form(model)
+
+      // Build list of values to set, excluding unchecked future states
+      let base_values = [
+        #("entity-id-1", form.field_value(model.form, "entity-id-1")),
+        #("entity-id-2", form.field_value(model.form, "entity-id-2")),
+      ]
+
+      let flow_values =
+        list.flat_map(all_flow_types, fn(t) {
+          let flow_field = t <> "-flow"
+          let direction_field = t <> "-direction"
+          let future_field_name = t <> "-future"
+          let future_value = form.field_value(model.form, future_field_name)
+
+          let base_flow_values = [
+            #(flow_field, form.field_value(model.form, flow_field)),
+            #(direction_field, form.field_value(model.form, direction_field)),
+          ]
+
+          // Only add future value if it should be checked
+          let future_values = case t == flow_type {
+            True ->
+              // This is the one being toggled
+              case is_currently_checked {
+                True -> []
+                // Was checked, now unchecking - don't set value
+                False -> [#(future_field_name, "on")]
+                // Was unchecked, now checking
+              }
+            False ->
+              // Other flow types - preserve their current state if checked
+              case future_value {
+                "on" -> [#(future_field_name, "on")]
+                _ -> []
+              }
+          }
+
+          list.append(base_flow_values, future_values)
+        })
+
+      let all_values = list.append(base_values, flow_values)
+
+      #(
+        Model(..model, form: new_form |> form.set_values(all_values)),
         effect.none(),
       )
     }
@@ -428,12 +542,56 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
             effect.none(),
           )
         }
+        EditFlowForm(flow_id) -> {
+          case
+            update_existing_flow(
+              model,
+              flow_id,
+              entity_id_1,
+              entity_id_2,
+              material_flow,
+              material_direction,
+              material_future,
+              financial_flow,
+              financial_direction,
+              financial_future,
+              information_flow,
+              information_direction,
+              information_future,
+            )
+          {
+            Ok(#(flow, updated_model)) -> {
+              edit_flow(flow)
+              #(reset_form(updated_model), effect.none())
+            }
+            Error(_) -> #(model, effect.none())
+          }
+        }
         _ -> #(model, effect.none())
       }
     }
     FlowFormSubmit(Error(form)) -> {
       let updated_model = Model(..model, form: form)
       #(updated_model, effect.none())
+    }
+    DeleteFlow(flow_id) -> {
+      case get_flow_by_id(model, flow_id) {
+        Ok(flow) -> {
+          let updated_flows =
+            list.filter(model.flows, fn(f) { flow.flow_id != f.flow_id })
+
+          let updated_model =
+            Model(..model, flows: updated_flows)
+            |> reset_form()
+
+          delete_flow(flow.flow_id)
+
+          #(updated_model, effect.none())
+        }
+        Error(_) -> {
+          #(model, effect.none())
+        }
+      }
     }
     DownloadModel -> {
       let model_data = serialise_model(model)
@@ -614,6 +772,67 @@ type Flow {
   )
 }
 
+fn get_flow_by_id(model: Model, flow_id: String) -> Result(Flow, Nil) {
+  list.find(model.flows, fn(flow) { flow.flow_id == flow_id })
+}
+
+fn update_existing_flow(
+  model: Model,
+  flow_id: String,
+  entity_id_1: String,
+  entity_id_2: String,
+  material_flow: String,
+  material_direction: Int,
+  material_future: Bool,
+  financial_flow: String,
+  financial_direction: Int,
+  financial_future: Bool,
+  information_flow: String,
+  information_direction: Int,
+  information_future: Bool,
+) -> Result(#(Flow, Model), Nil) {
+  use original_flow <- result.try(get_flow_by_id(model, flow_id))
+
+  let updated_flow =
+    Flow(
+      ..original_flow,
+      entity_ids: #(entity_id_1, entity_id_2),
+      flow_types: list.filter(
+          [
+            #(material_flow, material_direction, material_future, "Material"),
+            #(
+              financial_flow,
+              financial_direction,
+              financial_future,
+              "Financial",
+            ),
+            #(
+              information_flow,
+              information_direction,
+              information_future,
+              "Information",
+            ),
+          ],
+          fn(t) { t.0 == "on" },
+        )
+        |> list.map(fn(t) {
+          FlowType(flow_category: t.3, direction: t.1, is_future: t.2)
+        }),
+    )
+
+  let updated_flows =
+    list.map(model.flows, fn(flow) {
+      case flow.flow_id == flow_id {
+        True -> updated_flow
+        False -> flow
+      }
+    })
+
+  let updated_model = Model(..model, flows: updated_flows)
+
+  Ok(#(updated_flow, updated_model))
+}
+
 fn flow_decoder() {
   use flow_id <- decode.field("flow_id", decode.string)
   use entity_ids_list <- decode.field("entity_ids", decode.list(decode.string))
@@ -662,6 +881,7 @@ type FormType {
   EditEntityForm(entity_id: String)
   MaterialsForm
   NewFlowForm
+  EditFlowForm(flow_id: String)
   NoForm
 }
 
@@ -737,14 +957,16 @@ fn new_flow_form(model: Model) {
 
     let validate_combination_does_not_exist = fn(entity_id_2) {
       case
+        model.current_form,
         list.filter(model.flows, fn(flow) {
           flow.entity_ids == #(entity_id_1, entity_id_2)
           || flow.entity_ids == #(entity_id_2, entity_id_1)
         })
         |> list.length()
       {
-        0 -> Ok(entity_id_2)
-        _ -> Error("entity combination exists")
+        EditFlowForm(_), _ -> Ok(entity_id_2)
+        _, 0 -> Ok(entity_id_2)
+        _, _ -> Error("entity combination exists")
       }
     }
 
@@ -818,11 +1040,114 @@ fn edit_entity_form(entity: Entity) -> Form(FormData) {
   ])
 }
 
+fn edit_flow_form(flow: Flow, model: Model) -> Form(FormData) {
+  let model = Model(..model, current_form: EditFlowForm(flow.flow_id))
+
+  let material_flow = case
+    list.find(flow.flow_types, fn(ft) { ft.flow_category == "Material" })
+  {
+    Ok(_) -> "on"
+    Error(_) -> ""
+  }
+
+  let financial_flow = case
+    list.find(flow.flow_types, fn(ft) { ft.flow_category == "Financial" })
+  {
+    Ok(_) -> "on"
+    Error(_) -> ""
+  }
+
+  let information_flow = case
+    list.find(flow.flow_types, fn(ft) { ft.flow_category == "Information" })
+  {
+    Ok(_) -> "on"
+    Error(_) -> ""
+  }
+
+  let material_direction = case
+    list.find(flow.flow_types, fn(ft) { ft.flow_category == "Material" })
+  {
+    Ok(ft) -> int.to_string(ft.direction)
+    Error(_) -> "1"
+  }
+
+  let material_future = case
+    list.find(flow.flow_types, fn(ft) { ft.flow_category == "Material" })
+  {
+    Ok(ft) ->
+      case ft.is_future {
+        True -> "on"
+        False -> ""
+      }
+    Error(_) -> ""
+  }
+
+  let financial_direction = case
+    list.find(flow.flow_types, fn(ft) { ft.flow_category == "Financial" })
+  {
+    Ok(ft) -> int.to_string(ft.direction)
+    Error(_) -> "1"
+  }
+
+  let financial_future = case
+    list.find(flow.flow_types, fn(ft) { ft.flow_category == "Financial" })
+  {
+    Ok(ft) ->
+      case ft.is_future {
+        True -> "on"
+        False -> ""
+      }
+    Error(_) -> ""
+  }
+
+  let information_direction = case
+    list.find(flow.flow_types, fn(ft) { ft.flow_category == "Information" })
+  {
+    Ok(ft) -> int.to_string(ft.direction)
+    Error(_) -> "1"
+  }
+
+  let information_future = case
+    list.find(flow.flow_types, fn(ft) { ft.flow_category == "Information" })
+  {
+    Ok(ft) ->
+      case ft.is_future {
+        True -> "on"
+        False -> ""
+      }
+    Error(_) -> ""
+  }
+
+  let base_values = [
+    #("entity-id-1", flow.entity_ids.0),
+    #("entity-id-2", flow.entity_ids.1),
+    #("material-direction", material_direction),
+    #("financial-direction", financial_direction),
+    #("information-direction", information_direction),
+  ]
+
+  let checkbox_values =
+    list.filter(
+      [
+        #("material-flow", material_flow),
+        #("financial-flow", financial_flow),
+        #("information-flow", information_flow),
+        #("material-future", material_future),
+        #("financial-future", financial_future),
+        #("information-future", information_future),
+      ],
+      fn(pair) { pair.1 == "on" },
+    )
+
+  new_flow_form(model)
+  |> form.set_values(list.append(base_values, checkbox_values))
+}
+
 fn render_form(model: Model) {
   case model.current_form {
     NewEntityForm | EditEntityForm(_) -> render_entity_form(model.form, model)
     MaterialsForm -> render_materials_form(model.form, model)
-    NewFlowForm -> render_flow_form(model.form, model)
+    NewFlowForm | EditFlowForm(_) -> render_flow_form(model.form, model)
     NoForm -> element.none()
   }
 }
@@ -911,6 +1236,7 @@ fn render_flow_form(form: Form(FormData), model: Model) {
       render_flow_options(form, "financial"),
       render_flow_options(form, "information"),
       render_submit_button(model.current_form, "flow-form"),
+      render_delete_button(model.current_form),
     ]),
   ])
 }
@@ -1174,12 +1500,35 @@ fn render_flow_options(form: Form(FormData), flow_type: String) {
           [
             class("ml-2 w-1/2 bg-gray-200 text-gray-700 rounded-sm px-2 mt-2"),
             attribute.name(flow_type <> "-direction"),
-            attribute.value("1"),
           ],
           [
-            html.option([attribute.value("1")], "1 → 2"),
-            html.option([attribute.value("-1")], "2 → 1"),
-            html.option([attribute.value("0")], "Bidirectional"),
+            html.option(
+              [
+                attribute.value("1"),
+                attribute.selected(
+                  form.field_value(form, flow_type <> "-direction") == "1",
+                ),
+              ],
+              "1 → 2",
+            ),
+            html.option(
+              [
+                attribute.value("-1"),
+                attribute.selected(
+                  form.field_value(form, flow_type <> "-direction") == "-1",
+                ),
+              ],
+              "2 → 1",
+            ),
+            html.option(
+              [
+                attribute.value("0"),
+                attribute.selected(
+                  form.field_value(form, flow_type <> "-direction") == "0",
+                ),
+              ],
+              "Bidirectional",
+            ),
           ],
         ),
       ]),
@@ -1191,6 +1540,10 @@ fn render_flow_options(form: Form(FormData), flow_type: String) {
           attribute.type_("checkbox"),
           attribute.name(flow_type <> "-future"),
           attribute.class("ml-2"),
+          attribute.checked(
+            form.field_value(form, flow_type <> "-future") == "on",
+          ),
+          event.on_click(ToggleFutureState(flow_type)),
         ]),
       ]),
     ]),
@@ -1262,6 +1615,7 @@ fn render_submit_button(current_form: FormType, form_id: String) {
     NewEntityForm -> "Add Entity"
     EditEntityForm(_) -> "Edit Entity"
     NewFlowForm -> "Add Flow"
+    EditFlowForm(_) -> "Edit Flow"
     _ -> ""
   }
 
@@ -1281,6 +1635,7 @@ fn render_submit_button(current_form: FormType, form_id: String) {
 fn render_delete_button(current_form: FormType) {
   let #(message, label) = case current_form {
     EditEntityForm(entity_id) -> #(DeleteEntity(entity_id), "Delete Entity")
+    EditFlowForm(flow_id) -> #(DeleteFlow(flow_id), "Delete Flow")
     _ -> #(DeleteEntity(""), "")
   }
 
@@ -1304,7 +1659,7 @@ fn render_import_export_buttons() {
     html.button(
       [
         class(
-          "bg-purple-600 hover:bg-purple-400 px-3 py-2 rounded-sm cursor-pointer",
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer",
         ),
         event.on_click(DownloadModel),
       ],
@@ -1313,7 +1668,7 @@ fn render_import_export_buttons() {
     html.label(
       [
         class(
-          "bg-orange-600 hover:bg-orange-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block",
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block",
         ),
         attribute.for("import-file"),
       ],
@@ -1414,6 +1769,12 @@ fn update_material(name: String, material_id: String) -> Nil
 
 @external(javascript, "./../components/resource_pooling.ffi.mjs", "createFlow")
 fn create_flow(flow: Flow) -> Nil
+
+@external(javascript, "./../components/resource_pooling.ffi.mjs", "editFlow")
+fn edit_flow(flow: Flow) -> Nil
+
+@external(javascript, "./../components/resource_pooling.ffi.mjs", "deleteFlow")
+fn delete_flow(flow_id: String) -> Nil
 
 @external(javascript, "./../components/resource_pooling.ffi.mjs", "downloadModelData")
 fn download_model_data(json_data: String) -> Nil

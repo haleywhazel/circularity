@@ -44,6 +44,7 @@ const CONFIG = {
   itemsPerActivityColumn: 3,
   itemsPerMaterialColumn: 5,
   entityMargin: 40,
+  flowHoverWidth: 8,
 };
 
 // ============================================================================
@@ -203,8 +204,17 @@ export function createFlow(flow) {
     createSingleFlow(flowGroup, entity1Bounds, entity2Bounds, flowType, index);
   });
 
+  setupFlowInteraction(flowGroup, flowId);
+
   addFlowToSimulation(flowId, entityId1, entityId2, flow);
   return flowGroup;
+}
+
+export function editFlow(flow) {
+  if (!resourcePooling.g) return;
+
+  deleteFlow(flow.flow_id);
+  createFlow(flow);
 }
 
 export function deleteFlow(flowId) {
@@ -797,6 +807,15 @@ function createSingleFlow(
   const pathData = createCurvedPath(startPoint, endPoint);
   const color = FLOW_COLORS[flowType.flow_category] || "#666";
 
+  const hoverPath = flowGroup
+    .append("path")
+    .attr("class", "flow-hover")
+    .attr("d", pathData)
+    .style("fill", "none")
+    .style("stroke", "transparent")
+    .style("stroke-width", CONFIG.flowHoverWidth)
+    .style("cursor", "pointer");
+
   const flowPath = flowGroup
     .append("path")
     .attr("class", "flow-path")
@@ -804,12 +823,23 @@ function createSingleFlow(
     .style("fill", "none")
     .style("stroke", color)
     .style("stroke-width", 1)
-    .style("stroke-dasharray", flowType.is_future ? "5,5" : "none");
+    .style("stroke-dasharray", flowType.is_future ? "5,5" : "none")
+    .style("pointer-events", "none");
 
   setupFlowArrows(flowPath, flowType);
   flowPath.datum({ flowType: flowType, index: index });
+  hoverPath.datum({ flowType: flowType, index: index });
 
-  return flowPath;
+  return { hoverPath, flowPath };
+}
+
+function setupFlowInteraction(flowGroup, flowId) {
+  flowGroup.on("click", function (event) {
+    event.stopPropagation();
+    if (messageDispatch) {
+      messageDispatch("flow_id:" + flowId);
+    }
+  });
 }
 
 function setupFlowArrows(flowPath, flowType) {
@@ -1058,7 +1088,7 @@ function updateFlowPath(flowElement, sourceNode, targetNode) {
     centerY: targetNode.y + (targetNode.height || 100) / 2,
   };
 
-  flowElement.selectAll(".flow-path").each(function (d, i) {
+  flowElement.selectAll(".flow-path, .flow-hover").each(function (d, i) {
     const pathElement = d3.select(this);
     const flowData = pathElement.datum();
 
