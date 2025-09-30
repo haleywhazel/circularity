@@ -4,31 +4,33 @@
 
 const CONFIG = {
   nodeRadius: 1.5,
-  arrowOffset: 2.5, // nodeRadius + 1
   mapHeight: 0.6, // 60% of window height
   animationDuration: 150,
-  pathAnimationDuration: 300,
+  pathAnimationDuration: 150,
   hoverDuration: 200,
-  bundleBeta: 0.85,
+  bundleBeta: 0.9,
   alphaDecay: 0.1,
-  forceStrength: 0.5,
+  chargeStrength: 3,
+  linkStrength: 3,
   chargeDistanceMax: 50,
   hoverStrokeWidth: 2.5,
+  arrowSize: 3,
 };
 
 const SCALES = {
-  pathThickness: d3.scaleLinear().range([0.2, 1.2]),
+  pathThickness: d3.scaleLinear().range([0.4, 2]),
   segments: d3.scaleLinear().domain([0, 500]).range([1, 8]),
 };
 
 const COLORS = {
-  node: "#ef4444",
+  node: "#1f2937",
   nodeStroke: "#ffffff",
   tempNode: "#6b7280",
-  path: "#3b82f6",
+  path: "#4b5563",
   country: "#9ca3af",
   countryStroke: "#f3f4f6",
   text: "#1f2937",
+  legendBackground: "rgba(255, 255, 255, 0.5)",
   labelBackground: "rgba(255, 255, 255, 0)",
   labelBackgroundHover: "rgba(255, 255, 255, 0.5)",
   labelBackgroundDrag: "rgba(255, 255, 255, 0.8)",
@@ -148,6 +150,28 @@ export function deleteNode(nodeId) {
     return null;
   }
 
+  const connectedPaths = flowMap.bundleData.paths.filter(
+    (path) => path.source.id === nodeId || path.target.id === nodeId,
+  );
+
+  connectedPaths.forEach((path) => {
+    removeBundleData(path.id);
+    const pathElement = flowMap.pathsList?.select(`#${path.id}`);
+    if (pathElement && !pathElement.empty()) {
+      pathElement.remove();
+    }
+    const hoverElement = flowMap.pathsList?.select(
+      `path.flow-hover[data-path-id="${path.id}"]`,
+    );
+    if (hoverElement && !hoverElement.empty()) {
+      hoverElement.remove();
+    }
+  });
+
+  if (flowMap.bundleData.paths.length > 0) {
+    regenerateBundling();
+  }
+
   animateNodeOut(existingNode);
   return null;
 }
@@ -228,6 +252,14 @@ export function deletePath(pathId) {
   const existingPath = flowMap.pathsList.select(`#${pathId}`);
   if (!existingPath.empty()) {
     animatePathOut(existingPath);
+
+    const hoverPath = flowMap.pathsList
+      .selectAll("path.flow-hover")
+      .filter((d) => d.id === pathId);
+    if (!hoverPath.empty()) {
+      hoverPath.remove();
+    }
+
     removeBundleData(pathId);
     regenerateBundling();
   } else {
@@ -242,6 +274,20 @@ export function removeTempNode() {
     flowMap.tempNode.remove();
     flowMap.tempNode = null;
   }
+}
+
+export function showTempNodeAtCoords(lat, lon) {
+  if (!flowMap.projection) {
+    requestAnimationFrame(() => showTempNodeAtCoords(lat, lon));
+    return null;
+  }
+
+  removeTempNode();
+
+  const [x, y] = flowMap.projection([lon, lat]);
+  createTempNode(x, y);
+
+  return null;
 }
 
 export function downloadModelData(gleamJsonData) {
@@ -342,18 +388,26 @@ export function setupFileImport(dispatch) {
         reader.readAsText(file);
       }
     });
+
+    const fileLabel = shadowRoot.querySelector('label[for="import-file"]');
+    if (fileLabel) {
+      fileLabel.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          fileInput.click();
+        }
+      });
+    }
   });
 }
 
-export function restoreD3StateAfterImport(nodes, paths) {
-  if (!window.pendingD3State) return;
-
+export function restoreD3State(nodes, paths) {
   const d3State = window.pendingD3State;
 
   clearFlowMap();
 
   nodes.toArray().forEach((node) => {
-    const nodeState = d3State.nodes.find((n) => n.id === node.node_id);
+    const nodeState = d3State?.nodes.find((n) => n.id === node.node_id);
     addNode(node.node_id, node.lat, node.lon, node.node_label);
 
     if (nodeState && (nodeState.labelDx !== 0 || nodeState.labelDy !== -6)) {
@@ -388,7 +442,94 @@ export function restoreD3StateAfterImport(nodes, paths) {
     );
   });
 
-  delete window.pendingD3State;
+  if (window.pendingD3State) {
+    delete window.pendingD3State;
+  }
+}
+
+export function exportMapAsPNG() {
+  if (!flowMap.svg || !flowMap.initialised) {
+    console.warn("Map not ready for export");
+    return null;
+  }
+
+  const svgNode = flowMap.svg.node();
+  const clonedSvg = svgNode.cloneNode(true);
+
+  const currentTransform = flowMap.g.attr("transform");
+
+  const clonedGroup = clonedSvg.querySelector("g");
+  if (clonedGroup && currentTransform) {
+    clonedGroup.setAttribute("transform", currentTransform);
+  }
+
+  const bbox = flowMap.g.node().getBBox();
+
+  const padding = 40;
+  const width = bbox.width + padding * 2;
+  const height = bbox.height + padding * 2;
+
+  clonedSvg.setAttribute(
+    "viewBox",
+    `${bbox.x - padding} ${bbox.y - padding} ${width} ${height}`,
+  );
+
+  clonedSvg.setAttribute("width", width);
+  clonedSvg.setAttribute("height", height);
+
+  // Add white background
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", bbox.x - padding);
+  rect.setAttribute("y", bbox.y - padding);
+  rect.setAttribute("width", width);
+  rect.setAttribute("height", height);
+  rect.setAttribute("fill", "white");
+  clonedGroup.insertBefore(rect, clonedGroup.firstChild);
+
+  clonedSvg.style.cursor = "default";
+
+  if (!clonedSvg.getAttribute("xmlns")) {
+    clonedSvg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  }
+
+  const serializer = new XMLSerializer();
+  const svgString = serializer.serializeToString(clonedSvg);
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+
+  const scale = 15;
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const img = new Image();
+  const svgBlob = new Blob([svgString], {
+    type: "image/svg+xml;charset=utf-8",
+  });
+  const url = URL.createObjectURL(svgBlob);
+
+  img.onload = function () {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(function (blob) {
+      const pngUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = pngUrl;
+      link.download = `flow-map-${new Date().toISOString().slice(0, 10)}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(pngUrl);
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  };
+
+  img.src = url;
+
+  return null;
 }
 
 // ============================================================================
@@ -667,6 +808,7 @@ function createHoverAreas(line) {
     .attr("d", (d) => line(d.segments))
     .attr("class", "flow-hover")
     .attr("fill", "none")
+    .attr("data-path-id", (d) => d.id)
     .attr("stroke", "transparent")
     .attr("stroke-width", CONFIG.hoverStrokeWidth)
     .style("cursor", "pointer")
@@ -687,6 +829,7 @@ function createVisiblePaths(line) {
     .attr("fill", "none")
     .attr("stroke", COLORS.path)
     .attr("stroke-width", (d) => SCALES.pathThickness(d.value))
+    .attr("marker-mid", "url(#arrowhead)")
     .style("pointer-events", "none");
 }
 
@@ -939,6 +1082,10 @@ function regenerateBundling() {
 
   setupForceLayout(visiblePaths, hoverAreas, line);
   animatePathsIn(visiblePaths);
+
+  requestAnimationFrame(() => {
+    createLegend();
+  });
 }
 
 function updatePathScales() {
@@ -950,6 +1097,9 @@ function updatePathScales() {
 }
 
 function setupForceLayout(visiblePaths, hoverAreas, line) {
+  visiblePaths.style("opacity", 0);
+  hoverAreas.style("opacity", 0);
+
   stopForceLayout();
 
   flowMap.forceLayout = d3
@@ -960,15 +1110,24 @@ function setupForceLayout(visiblePaths, hoverAreas, line) {
       "charge",
       d3
         .forceManyBody()
-        .strength(CONFIG.forceStrength)
+        .strength(CONFIG.chargeStrength)
         .distanceMax(CONFIG.chargeDistanceMax),
     )
-    .force("link", d3.forceLink().strength(CONFIG.forceStrength).distance(1))
+    .force("link", d3.forceLink().strength(CONFIG.linkStrength).distance(1))
     .on("tick", function () {
       visiblePaths.attr("d", (d) => line(d.segments));
       hoverAreas.attr("d", (d) => line(d.segments));
+    })
+    .on("end", function () {
+      visiblePaths
+        .transition()
+        .duration(CONFIG.pathAnimationDuration)
+        .style("opacity", 1);
+      hoverAreas
+        .transition()
+        .duration(CONFIG.pathAnimationDuration)
+        .style("opacity", 1);
     });
-
   flowMap.forceLayout
     .nodes(flowMap.bundleData.nodes)
     .force("link")
@@ -1056,9 +1215,77 @@ function clearFlowMap() {
   if (flowMap.g) {
     flowMap.g.selectAll(".node").remove();
     flowMap.g.selectAll(".flow").remove();
+    flowMap.svg.selectAll(".legend").remove();
     flowMap.bundleData = { nodes: [], links: [], paths: [] };
     stopForceLayout();
   }
+}
+
+function createLegend() {
+  flowMap.svg.selectAll(".legend").remove();
+
+  if (flowMap.bundleData.paths.length === 0) return;
+
+  const legendGroup = flowMap.svg.append("g").attr("class", "legend");
+
+  const maxValue = SCALES.pathThickness.domain()[1];
+  const minValue = SCALES.pathThickness.domain()[0];
+
+  const legendValues = [
+    minValue,
+    maxValue * 0.25,
+    maxValue * 0.5,
+    maxValue * 0.75,
+    maxValue,
+  ].filter((v) => v > 0);
+
+  const legendX = 15;
+  const legendY = flowMap.svg.attr("height") - 70;
+
+  const legendHeight = legendValues.length * 12 + 20;
+  legendGroup
+    .append("rect")
+    .attr("x", legendX - 5)
+    .attr("y", legendY - 15)
+    .attr("width", 100)
+    .attr("height", legendHeight)
+    .attr("fill", COLORS.legendBackground)
+    .attr("stroke", COLORS.node)
+    .attr("stroke-width", 0.5)
+    // .attr("opacity", 0.9)
+    .attr("rx", 2);
+
+  legendGroup
+    .append("text")
+    .attr("x", legendX)
+    .attr("y", legendY - 5)
+    .style("font-size", "5px")
+    .style("font-family", STYLES.fontFamily)
+    .style("font-weight", "bold")
+    .style("fill", COLORS.text)
+    .text("Flow Value");
+
+  legendValues.forEach((value, i) => {
+    const y = legendY + 5 + i * 12;
+
+    legendGroup
+      .append("line")
+      .attr("x1", legendX)
+      .attr("y1", y)
+      .attr("x2", legendX + 20)
+      .attr("y2", y)
+      .attr("stroke", COLORS.path)
+      .attr("stroke-width", SCALES.pathThickness(value));
+
+    legendGroup
+      .append("text")
+      .attr("x", legendX + 25)
+      .attr("y", y + 1.5)
+      .style("font-size", "4px")
+      .style("font-family", STYLES.fontFamily)
+      .style("fill", COLORS.text)
+      .text(Math.round(value).toLocaleString());
+  });
 }
 
 // ============================================================================
@@ -1095,6 +1322,20 @@ function setupSVG(shadowRoot, width, height) {
     .style("cursor", "crosshair");
 
   flowMap.g = flowMap.svg.append("g");
+
+  flowMap.svg
+    .append("defs")
+    .append("marker")
+    .attr("id", "arrowhead")
+    .attr("viewBox", "0 -5 10 10")
+    .attr("refX", 5)
+    .attr("refY", 0)
+    .attr("markerWidth", CONFIG.arrowSize)
+    .attr("markerHeight", CONFIG.arrowSize)
+    .attr("orient", "auto")
+    .append("path")
+    .attr("d", "M0,-5L10,0L0,5")
+    .attr("fill", COLORS.path);
 }
 
 function setupZoomBehavior() {

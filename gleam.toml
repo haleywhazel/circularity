@@ -19,6 +19,7 @@ lustre = ">= 5.3.5 and < 6.0.0"
 formal = ">= 3.0.0 and < 4.0.0"
 keyboard_shortcuts = ">= 0.9.1 and < 1.0.0"
 gleam_json = ">= 3.0.2 and < 4.0.0"
+lustre_http = ">= 1.0.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

@@ -23,7 +23,7 @@ type Model {
 }
 
 fn init(_) {
-  Model("Resource Pooling", True)
+  Model("Flow Map", True)
 }
 
 // Update
@@ -92,8 +92,7 @@ fn view(model) {
         ]),
       ],
     ),
-    html.div([class("flex flex-col p-12 flex-1 min-w-0")], [
-      html.h1([class("text-4xl font-extrabold")], [text(model.page)]),
+    html.div([class("flex flex-col px-12 flex-1 min-w-0")], [
       html.div([class("flex-1 w-full py-4")], [
         html.div([content_class(model, "Flow Map")], [flow_map.element()]),
         html.div([content_class(model, "Resource Pooling")], [

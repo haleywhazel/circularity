@@ -3,11 +3,13 @@ import keyboard_shortcuts.{
   Key, KeyDown, Modifier, PreventDefault, Shortcut, install_keyboard_shortcuts,
 }
 import lustre
-import lustre/attribute.{class, id}
+import lustre/attribute.{attribute, class, id}
 import lustre/effect.{type Effect}
 import lustre/element.{type Element, text}
 import lustre/element/html
+import lustre/element/svg
 import lustre/event
+import lustre_http as http
 
 import gleam/dynamic/decode
 import gleam/float
@@ -79,19 +81,20 @@ fn init(_) -> #(Model, Effect(Message)) {
       ])
     })
 
-  #(
-    Model(
-      form: empty_form(),
-      current_form: NoForm,
-      actions: [],
-      next_node_id: 1,
-      next_path_id: 1,
-      nodes: [],
-      paths: [],
-      selected_coords: None,
-      selected_node: None,
-    ),
-    init_effect,
+  #(empty_model(), init_effect)
+}
+
+fn empty_model() {
+  Model(
+    form: empty_form(),
+    current_form: NoForm,
+    actions: [],
+    next_node_id: 1,
+    next_path_id: 1,
+    nodes: [],
+    paths: [],
+    selected_coords: None,
+    selected_node: None,
   )
 }
 
@@ -124,12 +127,17 @@ type Message {
   NodeFormSubmit(Result(FormData, Form(FormData)))
   StartPathForm(path_id: String)
   PathFormSubmit(Result(FormData, Form(FormData)))
+  LocationSearch(query: List(#(String, String)))
+  LocationSearchResult(result: Result(LocationResult, http.HttpError))
   DeleteNode(node_id: String)
   DeletePath(path_id: String)
   Undo
   ResetForm
   DownloadModel
   ImportModel(json_data: String)
+  ExportMap
+  ClearMap
+  GenerateRandomMap
 }
 
 fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
@@ -501,8 +509,50 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
           )
           #(updated_model, effect.none())
         }
+        [ResetMap(previous_model), ..] -> {
+          let recreation_effect =
+            effect.from(fn(_dispatch) {
+              restore_d3_state(previous_model.nodes, previous_model.paths)
+            })
+          #(previous_model, recreation_effect)
+        }
+        [GenerateMap(previous_model), ..] -> {
+          let recreation_effect =
+            effect.from(fn(_dispatch) {
+              restore_d3_state(previous_model.nodes, previous_model.paths)
+            })
+          #(previous_model, recreation_effect)
+        }
         [] -> #(model, effect.none())
       }
+    }
+    LocationSearch([#("location-search", query)]) -> {
+      #(
+        model,
+        http.get(
+          "https://photon.komoot.io/api/?q=" <> query <> "&limit=1",
+          http.expect_json(decode_location_result(), LocationSearchResult),
+        ),
+      )
+    }
+    LocationSearchResult(Ok(result)) -> {
+      let updated_form =
+        model.form
+        |> form.set_values([
+          #("lat", float.to_string(result.lat)),
+          #("lon", float.to_string(result.lon)),
+          #("node_label", result.name),
+        ])
+
+      show_temp_node_at_coords(result.lat, result.lon)
+      #(
+        Model(
+          ..model,
+          form: updated_form,
+          selected_coords: Some(#(result.lat, result.lon)),
+        ),
+        effect.none(),
+      )
     }
     ResetForm -> {
       let updated_model =
@@ -521,15 +571,38 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
         Ok(imported_model) -> {
           let recreation_effect =
             effect.from(fn(_dispatch) {
-              restore_d3_state_after_import(
-                imported_model.nodes,
-                imported_model.paths,
-              )
+              restore_d3_state(imported_model.nodes, imported_model.paths)
             })
           #(imported_model, recreation_effect)
         }
         Error(_) -> #(model, effect.none())
       }
+    }
+    ExportMap -> {
+      export_map_as_png()
+      #(model, effect.none())
+    }
+    GenerateRandomMap -> {
+      let random_model = generate_random_map()
+
+      let recreation_effect =
+        effect.from(fn(_dispatch) {
+          restore_d3_state(random_model.nodes, random_model.paths)
+        })
+
+      #(
+        Model(..random_model, actions: [GenerateMap(model), ..model.actions]),
+        recreation_effect,
+      )
+    }
+    ClearMap -> {
+      let updated_model =
+        Model(..empty_model(), actions: [ResetMap(model), ..model.actions])
+
+      let recreation_effect =
+        effect.from(fn(_dispatch) { restore_d3_state([], []) })
+
+      #(updated_model, recreation_effect)
     }
     _ -> #(model, effect.none())
   }
@@ -539,6 +612,7 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
 fn view(model: Model) -> Element(Message) {
   html.div([class("flex flex-1")], [
     html.div([class("flex-col w-2/3 p-4")], [
+      html.h1([class("text-4xl font-extrabold mb-6")], [text("Flow map")]),
       html.div(
         [
           class("flex-1 border-2 border-solid border-gray-900 rounded-lg p-1"),
@@ -560,32 +634,131 @@ fn render_controls(model: Model) -> Element(Message) {
       ),
     ],
     [
-      render_import_export_buttons(),
+      html.div([class("text-sm mb-2")], [
+        text(
+          "Hover over buttons for their descriptions. Selecting nodes and paths on the map allows you to edit or delete them. Zoom and pan on the map to modify the view extent.",
+        ),
+      ]),
+      render_import_export_buttons(model),
       html.button(
         [
           class(
             "bg-blue-600 hover:bg-blue-400 px-3 py-2 rounded-sm cursor-pointer",
           ),
+          attribute.title("Add Node"),
           event.on_click(StartNodeForm("")),
         ],
-        [text("Add Node")],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute(
+                  "d",
+                  "M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z M18 12a6 6 0 1 1-12 0 6 6 0 0 1 12 0Z",
+                ),
+              ]),
+            ],
+          ),
+        ],
       ),
       html.button(
         [
           class(
             "bg-green-600 hover:bg-green-400 px-3 py-2 rounded-sm cursor-pointer ml-2",
           ),
+          attribute.title("Add Path"),
           event.on_click(StartPathForm("")),
         ],
-        [text("Add Path")],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute(
+                  "d",
+                  "M4 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M20 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M5 10Q12 3 19 10",
+                ),
+              ]),
+            ],
+          ),
+        ],
       ),
-      render_undo(model),
+      html.button(
+        [
+          class(
+            "bg-purple-600 hover:bg-purple-400 px-3 py-2 rounded-sm cursor-pointer ml-2",
+          ),
+          attribute.title("Generate Random Map"),
+          event.on_click(GenerateRandomMap),
+        ],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute(
+                  "d",
+                  "M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z",
+                ),
+              ]),
+            ],
+          ),
+        ],
+      ),
+      html.button(
+        [
+          class(
+            "bg-red-600 hover:bg-red-400 px-3 py-2 rounded-sm cursor-pointer ml-2",
+          ),
+          attribute.title("Reset Map"),
+          event.on_click(ClearMap),
+        ],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute("d", "M6 18 18 6M6 6l12 12"),
+              ]),
+            ],
+          ),
+        ],
+      ),
       html.div(
         [
           class("transition-all duration-300 ease-in-out"),
           case model.current_form {
             NoForm -> class("max-h-0 opacity-0")
-            _ -> class("max-h-96 opacity-100")
+            _ -> class("max-h-256 opacity-100")
           },
         ],
         [render_form(model)],
@@ -741,6 +914,35 @@ fn path_decoder() {
   ))
 }
 
+// Location types
+type LocationResult {
+  LocationResult(lat: Float, lon: Float, name: String)
+}
+
+fn decode_location_result() {
+  use features <- decode.field(
+    "features",
+    decode.list({
+      use name <- decode.subfield(["properties", "name"], decode.string)
+      use coords <- decode.subfield(["geometry", "coordinates"], {
+        decode.list(decode.float)
+        |> decode.map(fn(coords) {
+          case coords {
+            [lon, lat] -> LocationResult(lat, lon, name)
+            _ -> LocationResult(0.0, 0.0, name)
+          }
+        })
+      })
+      decode.success(coords)
+    }),
+  )
+
+  case list.first(features) {
+    Ok(coords) -> decode.success(coords)
+    Error(_) -> decode.failure(LocationResult(0.0, 0.0, ""), "Coordinates")
+  }
+}
+
 // Form helpers
 type FormType {
   NewNodeForm
@@ -767,6 +969,8 @@ type Action {
   NewPath(path: Path)
   EditPath(new: Path, previous: Path)
   RemovePath(path: Path)
+  GenerateMap(previous_model: Model)
+  ResetMap(previous_model: Model)
 }
 
 fn empty_form() {
@@ -855,6 +1059,14 @@ fn render_node_form(form: Form(FormData), current_form: FormType) {
   }
 
   html.div([class("flex-1 py-2")], [
+    html.div([class("text-sm")], [
+      text(
+        "Select a location on the map, search for a location, or manually enter coordinates.",
+      ),
+    ]),
+    html.form([event.on_submit(LocationSearch)], [
+      render_search_location(),
+    ]),
     html.form([event.on_submit(handle_submit)], [
       render_input_field(form, "lat", "Latitude"),
       render_input_field(form, "lon", "Longitude"),
@@ -893,6 +1105,50 @@ fn render_path_form(
   ])
 }
 
+fn render_search_location() {
+  html.div([class("mt-2")], [
+    html.label([attribute.for("location-search")], [
+      text("Search for location: "),
+    ]),
+    html.div([class("flex mt-2 gap-2")], [
+      html.input([
+        class("flex-1 min-w-0 bg-gray-200 text-gray-700 rounded-sm px-2 py-1"),
+        id("location-search"),
+        attribute.type_("text"),
+        attribute.name("location-search"),
+      ]),
+
+      html.button(
+        [
+          class(
+            "flex bg-gray-600 hover:bg-gray-400 px-1 py-1 rounded-sm cursor-pointer",
+          ),
+        ],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute(
+                  "d",
+                  "m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z",
+                ),
+              ]),
+            ],
+          ),
+        ],
+      ),
+    ]),
+  ])
+}
+
 fn render_input_field(form: Form(FormData), name: String, label: String) {
   let errors = form.field_error_messages(form, name)
   html.div([], [
@@ -921,11 +1177,28 @@ fn render_undo(model: Model) {
       html.button(
         [
           class(
-            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2",
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer",
           ),
           event.on_click(Undo),
+          attribute.title("Undo"),
         ],
-        [text("Undo")],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute("d", "M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"),
+              ]),
+            ],
+          ),
+        ],
       )
   }
 }
@@ -1021,26 +1294,65 @@ fn render_delete_button(current_form: FormType) {
   }
 }
 
-fn render_import_export_buttons() {
-  html.div([class("flex-1 mb-2")], [
+fn render_import_export_buttons(model: Model) {
+  html.div([class("flex gap-2 mb-2")], [
     html.button(
       [
         class(
           "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer",
         ),
+        attribute.title("Download File"),
         event.on_click(DownloadModel),
       ],
-      [text("Download")],
+      [
+        svg.svg(
+          [
+            attribute("stroke-width", "1.5"),
+            attribute("stroke", "currentColor"),
+            attribute("fill", "none"),
+            class("size-6"),
+          ],
+          [
+            svg.path([
+              attribute("stroke-linecap", "round"),
+              attribute("stroke-linejoin", "round"),
+              attribute(
+                "d",
+                "M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3",
+              ),
+            ]),
+          ],
+        ),
+      ],
     ),
     html.label(
       [
         class(
-          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block",
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer inline-block",
         ),
+        attribute.title("Load File"),
         attribute.for("import-file"),
+        attribute("tabindex", "0"),
       ],
       [
-        text("Import"),
+        svg.svg(
+          [
+            attribute("stroke-width", "1.5"),
+            attribute("stroke", "currentColor"),
+            attribute("fill", "none"),
+            class("size-6"),
+          ],
+          [
+            svg.path([
+              attribute("stroke-linecap", "round"),
+              attribute("stroke-linejoin", "round"),
+              attribute(
+                "d",
+                "M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5",
+              ),
+            ]),
+          ],
+        ),
         html.input([
           id("import-file"),
           attribute.type_("file"),
@@ -1049,6 +1361,36 @@ fn render_import_export_buttons() {
         ]),
       ],
     ),
+    html.button(
+      [
+        class(
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer",
+        ),
+        attribute.title("Export as PNG"),
+        event.on_click(ExportMap),
+      ],
+      [
+        svg.svg(
+          [
+            attribute("stroke-width", "1.5"),
+            attribute("stroke", "currentColor"),
+            attribute("fill", "none"),
+            class("size-6"),
+          ],
+          [
+            svg.path([
+              attribute("stroke-linecap", "round"),
+              attribute("stroke-linejoin", "round"),
+              attribute(
+                "d",
+                "M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25",
+              ),
+            ]),
+          ],
+        ),
+      ],
+    ),
+    render_undo(model),
   ])
 }
 
@@ -1100,6 +1442,75 @@ fn deserialise_model(json_data: String) -> Result(Model, json.DecodeError) {
   json.parse(json_data, model_decoder())
 }
 
+// Random map generation
+fn generate_random_map() -> Model {
+  // 5 to 10 nodes
+  let num_nodes = 5 + int.random(6)
+
+  let cities =
+    list.take(
+      [
+        #("London", 51.5074, -0.1278),
+        #("Lagos", 6.455, 3.3945),
+        #("New York", 40.7128, -74.006),
+        #("São Paulo", -23.5505, -46.6333),
+        #("Tokyo", 35.6762, 139.6503),
+        #("Sydney", -33.8688, 151.2093),
+        #("Tunis", 36.8002, 10.1857757),
+        #("Singapore", 1.3521, 103.8198),
+        #("Mumbai", 19.076, 72.8777),
+        #("Cape Town", -33.9249, 18.4241),
+        #("Paris", 48.8566, 2.3522),
+      ],
+      num_nodes,
+    )
+
+  let #(next_node_id, nodes) =
+    list.map_fold(over: cities, from: 1, with: fn(i, city) {
+      #(i + 1, Node("node-id-" <> int.to_string(i), city.1, city.2, city.0))
+    })
+
+  let #(next_path_id, paths) =
+    list.map_fold(
+      over: list.range(1, num_nodes),
+      from: 1,
+      with: fn(i, node_idx_1) {
+        list.map_fold(
+          over: list.range(1, num_nodes),
+          from: i,
+          with: fn(j, node_idx_2) {
+            case node_idx_1 == node_idx_2 {
+              True -> #(j, Path("", "", "", 0.0))
+              False -> {
+                let flow_value = int.random(3000)
+                case flow_value > 1000 {
+                  True -> #(j, Path("", "", "", 0.0))
+                  False -> #(
+                    j + 1,
+                    Path(
+                      "path-id-" <> int.to_string(j),
+                      "node-id-" <> int.to_string(node_idx_1),
+                      "node-id-" <> int.to_string(node_idx_2),
+                      int.to_float(flow_value),
+                    ),
+                  )
+                }
+              }
+            }
+          },
+        )
+      },
+    )
+
+  Model(
+    ..empty_model(),
+    next_node_id: next_node_id,
+    next_path_id: next_path_id,
+    nodes: nodes,
+    paths: list.flatten(paths) |> list.filter(fn(path) { path.path_id != "" }),
+  )
+}
+
 // Helper
 @external(javascript, "./../components/flow_map.ffi.mjs", "setDispatch")
 fn js_dispatch(dispatch: fn(String) -> Nil) -> Nil
@@ -1138,14 +1549,20 @@ fn delete_path(path_id: String) -> Nil
 @external(javascript, "./../components/flow_map.ffi.mjs", "removeTempNode")
 fn remove_temp_node() -> Nil
 
+@external(javascript, "./../components/flow_map.ffi.mjs", "showTempNodeAtCoords")
+fn show_temp_node_at_coords(lat: Float, lon: Float) -> Nil
+
 @external(javascript, "./../components/flow_map.ffi.mjs", "downloadModelData")
 fn download_model_data(json_data: String) -> Nil
 
 @external(javascript, "./../components/flow_map.ffi.mjs", "setupFileImport")
 fn setup_file_import(dispatch: fn(String) -> Nil) -> Nil
 
-@external(javascript, "./../components/flow_map.ffi.mjs", "restoreD3StateAfterImport")
-fn restore_d3_state_after_import(nodes: List(Node), paths: List(Path)) -> Nil
+@external(javascript, "./../components/flow_map.ffi.mjs", "restoreD3State")
+fn restore_d3_state(nodes: List(Node), paths: List(Path)) -> Nil
+
+@external(javascript, "./../components/flow_map.ffi.mjs", "exportMapAsPNG")
+fn export_map_as_png() -> Nil
 
 @external(javascript, "./../components/utils.ffi.mjs", "focusRootById")
 fn focus_root_by_id(root: String, elemnt_id: String) -> Nil

@@ -36,12 +36,12 @@ var List = class {
   // @internal
   countLength() {
     let current = this;
-    let length3 = 0;
+    let length4 = 0;
     while (current) {
       current = current.tail;
-      length3++;
+      length4++;
     }
-    return length3 - 1;
+    return length4 - 1;
   }
 };
 function prepend(element6, tail) {
@@ -156,11 +156,11 @@ var BitArray = class {
    * @param {number} index
    * @returns {number | undefined}
    */
-  byteAt(index4) {
-    if (index4 < 0 || index4 >= this.byteSize) {
+  byteAt(index5) {
+    if (index5 < 0 || index5 >= this.byteSize) {
       return void 0;
     }
-    return bitArrayByteAt(this.rawBuffer, this.bitOffset, index4);
+    return bitArrayByteAt(this.rawBuffer, this.bitOffset, index5);
   }
   /** @internal */
   equals(other) {
@@ -248,12 +248,12 @@ var BitArray = class {
     return this.rawBuffer.length;
   }
 };
-function bitArrayByteAt(buffer, bitOffset, index4) {
+function bitArrayByteAt(buffer, bitOffset, index5) {
   if (bitOffset === 0) {
-    return buffer[index4] ?? 0;
+    return buffer[index5] ?? 0;
   } else {
-    const a2 = buffer[index4] << bitOffset & 255;
-    const b = buffer[index4 + 1] >> 8 - bitOffset;
+    const a2 = buffer[index5] << bitOffset & 255;
+    const b = buffer[index5 + 1] >> 8 - bitOffset;
     return a2 | b;
   }
 }
@@ -315,12 +315,12 @@ function isEqual(x, y) {
       } catch {
       }
     }
-    let [keys2, get2] = getters(a2);
+    let [keys2, get3] = getters(a2);
     const ka = keys2(a2);
     const kb = keys2(b);
     if (ka.length !== kb.length) return false;
     for (let k of ka) {
-      values3.push(get2(a2, k), get2(b, k));
+      values3.push(get3(a2, k), get3(b, k));
     }
   }
   return true;
@@ -382,6 +382,22 @@ var Some = class extends CustomType {
 };
 var None = class extends CustomType {
 };
+function to_result(option2, e) {
+  if (option2 instanceof Some) {
+    let a2 = option2[0];
+    return new Ok(a2);
+  } else {
+    return new Error(e);
+  }
+}
+function unwrap(option2, default$) {
+  if (option2 instanceof Some) {
+    let x = option2[0];
+    return x;
+  } else {
+    return default$;
+  }
+}
 
 // build/dev/javascript/gleam_stdlib/dict.mjs
 var referenceMap = /* @__PURE__ */ new WeakMap();
@@ -1095,6 +1111,39 @@ var Eq = class extends CustomType {
 var Gt = class extends CustomType {
 };
 
+// build/dev/javascript/gleam_stdlib/gleam/float.mjs
+function negate(x) {
+  return -1 * x;
+}
+function round2(x) {
+  let $ = x >= 0;
+  if ($) {
+    return round(x);
+  } else {
+    return 0 - round(negate(x));
+  }
+}
+
+// build/dev/javascript/gleam_stdlib/gleam/int.mjs
+function compare(a2, b) {
+  let $ = a2 === b;
+  if ($) {
+    return new Eq();
+  } else {
+    let $1 = a2 < b;
+    if ($1) {
+      return new Lt();
+    } else {
+      return new Gt();
+    }
+  }
+}
+function random(max2) {
+  let _pipe = random_uniform() * identity(max2);
+  let _pipe$1 = floor(_pipe);
+  return round2(_pipe$1);
+}
+
 // build/dev/javascript/gleam_stdlib/gleam/list.mjs
 var Ascending = class extends CustomType {
 };
@@ -1149,6 +1198,14 @@ function contains(loop$list, loop$elem) {
         loop$elem = elem;
       }
     }
+  }
+}
+function first(list4) {
+  if (list4 instanceof Empty) {
+    return new Error(void 0);
+  } else {
+    let first$1 = list4.head;
+    return new Ok(first$1);
   }
 }
 function filter_loop(loop$list, loop$fun, loop$acc) {
@@ -1255,17 +1312,17 @@ function index_map_loop(loop$list, loop$fun, loop$index, loop$acc) {
   while (true) {
     let list4 = loop$list;
     let fun = loop$fun;
-    let index4 = loop$index;
+    let index5 = loop$index;
     let acc = loop$acc;
     if (list4 instanceof Empty) {
       return reverse(acc);
     } else {
       let first$1 = list4.head;
       let rest$1 = list4.tail;
-      let acc$1 = prepend(fun(first$1, index4), acc);
+      let acc$1 = prepend(fun(first$1, index5), acc);
       loop$list = rest$1;
       loop$fun = fun;
-      loop$index = index4 + 1;
+      loop$index = index5 + 1;
       loop$acc = acc$1;
     }
   }
@@ -1273,22 +1330,46 @@ function index_map_loop(loop$list, loop$fun, loop$index, loop$acc) {
 function index_map(list4, fun) {
   return index_map_loop(list4, fun, 0, toList([]));
 }
+function take_loop(loop$list, loop$n, loop$acc) {
+  while (true) {
+    let list4 = loop$list;
+    let n = loop$n;
+    let acc = loop$acc;
+    let $ = n <= 0;
+    if ($) {
+      return reverse(acc);
+    } else {
+      if (list4 instanceof Empty) {
+        return reverse(acc);
+      } else {
+        let first$1 = list4.head;
+        let rest$1 = list4.tail;
+        loop$list = rest$1;
+        loop$n = n - 1;
+        loop$acc = prepend(first$1, acc);
+      }
+    }
+  }
+}
+function take(list4, n) {
+  return take_loop(list4, n, toList([]));
+}
 function append_loop(loop$first, loop$second) {
   while (true) {
-    let first = loop$first;
+    let first2 = loop$first;
     let second = loop$second;
-    if (first instanceof Empty) {
+    if (first2 instanceof Empty) {
       return second;
     } else {
-      let first$1 = first.head;
-      let rest$1 = first.tail;
+      let first$1 = first2.head;
+      let rest$1 = first2.tail;
       loop$first = rest$1;
       loop$second = prepend(first$1, second);
     }
   }
 }
-function append(first, second) {
-  return append_loop(reverse(first), second);
+function append(first2, second) {
+  return append_loop(reverse(first2), second);
 }
 function flatten_loop(loop$lists, loop$acc) {
   while (true) {
@@ -1723,6 +1804,28 @@ function sort(list4, compare5) {
     }
   }
 }
+function range_loop(loop$start, loop$stop, loop$acc) {
+  while (true) {
+    let start4 = loop$start;
+    let stop = loop$stop;
+    let acc = loop$acc;
+    let $ = compare(start4, stop);
+    if ($ instanceof Lt) {
+      loop$start = start4;
+      loop$stop = stop - 1;
+      loop$acc = prepend(stop, acc);
+    } else if ($ instanceof Eq) {
+      return prepend(stop, acc);
+    } else {
+      loop$start = start4;
+      loop$stop = stop + 1;
+      loop$acc = prepend(stop, acc);
+    }
+  }
+}
+function range(start4, stop) {
+  return range_loop(start4, stop, toList([]));
+}
 function key_find(keyword_list, desired_key) {
   return find_map(
     keyword_list,
@@ -1787,8 +1890,8 @@ function compare3(a2, b) {
     }
   }
 }
-function append2(first, second) {
-  return first + second;
+function append2(first2, second) {
+  return first2 + second;
 }
 function concat_loop(loop$strings, loop$accumulator) {
   while (true) {
@@ -1926,10 +2029,10 @@ function run_decoders(loop$data, loop$failure, loop$decoders) {
     }
   }
 }
-function one_of(first, alternatives) {
+function one_of(first2, alternatives) {
   return new Decoder(
     (dynamic_data) => {
-      let $ = first.function(dynamic_data);
+      let $ = first2.function(dynamic_data);
       let layer;
       let errors;
       layer = $;
@@ -2156,18 +2259,21 @@ function graphemes_iterator(string5) {
   }
 }
 function pop_grapheme(string5) {
-  let first;
+  let first2;
   const iterator = graphemes_iterator(string5);
   if (iterator) {
-    first = iterator.next().value?.segment;
+    first2 = iterator.next().value?.segment;
   } else {
-    first = string5.match(/./su)?.[0];
+    first2 = string5.match(/./su)?.[0];
   }
-  if (first) {
-    return new Ok([first, string5.slice(first.length)]);
+  if (first2) {
+    return new Ok([first2, string5.slice(first2.length)]);
   } else {
     return new Error(Nil);
   }
+}
+function pop_codeunit(str) {
+  return [str.charCodeAt(0) | 0, str.slice(1)];
 }
 function lowercase(string5) {
   return string5.toLowerCase();
@@ -2180,6 +2286,9 @@ function less_than(a2, b) {
 }
 function split(xs, pattern) {
   return List.fromArray(xs.split(pattern));
+}
+function string_codeunit_slice(str, from2, length4) {
+  return str.slice(from2, from2 + length4);
 }
 function starts_with(haystack, needle) {
   return haystack.startsWith(needle);
@@ -2211,18 +2320,31 @@ var trim_end_regex = /* @__PURE__ */ new RegExp(`[${unicode_whitespaces}]*$`);
 function console_log(term) {
   console.log(term);
 }
+function floor(float4) {
+  return Math.floor(float4);
+}
+function round(float4) {
+  return Math.round(float4);
+}
+function random_uniform() {
+  const random_uniform_result = Math.random();
+  if (random_uniform_result === 1) {
+    return random_uniform();
+  }
+  return random_uniform_result;
+}
 function new_map() {
   return Dict.new();
 }
-function map_get(map4, key) {
-  const value2 = map4.get(key, NOT_FOUND);
+function map_get(map6, key) {
+  const value2 = map6.get(key, NOT_FOUND);
   if (value2 === NOT_FOUND) {
     return new Error(Nil);
   }
   return new Ok(value2);
 }
-function map_insert(key, value2, map4) {
-  return map4.set(key, value2);
+function map_insert(key, value2, map6) {
+  return map6.set(key, value2);
 }
 function classify_dynamic(data) {
   if (typeof data === "string") {
@@ -2260,9 +2382,9 @@ function float_to_string(float4) {
   if (string5.indexOf(".") >= 0) {
     return string5;
   } else {
-    const index4 = string5.indexOf("e");
-    if (index4 >= 0) {
-      return string5.slice(0, index4) + ".0" + string5.slice(index4);
+    const index5 = string5.indexOf("e");
+    if (index5 >= 0) {
+      return string5.slice(0, index5) + ".0" + string5.slice(index5);
     } else {
       return string5 + ".0";
     }
@@ -2320,13 +2442,13 @@ var Inspector = class {
     const head = name2 === "Object" ? "" : name2 + " ";
     return `//js(${head}{${body}})`;
   }
-  #dict(map4) {
+  #dict(map6) {
     let body = "dict.from_list([";
-    let first = true;
-    map4.forEach((value2, key) => {
-      if (!first) body = body + ", ";
+    let first2 = true;
+    map6.forEach((value2, key) => {
+      if (!first2) body = body + ", ";
       body = body + "#(" + this.inspect(key) + ", " + this.inspect(value2) + ")";
-      first = false;
+      first2 = false;
     });
     return body + "])";
   }
@@ -2444,7 +2566,7 @@ function index2(data, key) {
   }
   return new Error(key_is_int ? "Indexable" : "Dict");
 }
-function list(data, decode2, pushPath, index4, emptyList) {
+function list(data, decode2, pushPath, index5, emptyList) {
   if (!(data instanceof List || Array.isArray(data))) {
     const error = new DecodeError("List", classify_dynamic(data), emptyList);
     return [emptyList, List.fromArray([error])];
@@ -2454,11 +2576,11 @@ function list(data, decode2, pushPath, index4, emptyList) {
     const layer = decode2(element6);
     const [out, errors] = layer;
     if (errors instanceof NonEmpty) {
-      const [_, errors2] = pushPath(layer, index4.toString());
+      const [_, errors2] = pushPath(layer, index5.toString());
       return [emptyList, errors2];
     }
     decoded.push(out);
-    index4++;
+    index5++;
   }
   return [List.fromArray(decoded), emptyList];
 }
@@ -2511,7 +2633,10 @@ function try$(result, fun) {
     return result;
   }
 }
-function unwrap(result, default$) {
+function then$(result, fun) {
+  return try$(result, fun);
+}
+function unwrap2(result, default$) {
   if (result instanceof Ok) {
     let v = result[0];
     return v;
@@ -2938,6 +3063,9 @@ function class$(name2) {
 function id(value2) {
   return attribute2("id", value2);
 }
+function title(text4) {
+  return attribute2("title", text4);
+}
 function accept(values3) {
   return attribute2("accept", join(values3, ","));
 }
@@ -2992,25 +3120,25 @@ function from(effect) {
 function empty2() {
   return null;
 }
-function get(map4, key) {
-  const value2 = map4?.get(key);
+function get(map6, key) {
+  const value2 = map6?.get(key);
   if (value2 != null) {
     return new Ok(value2);
   } else {
     return new Error(void 0);
   }
 }
-function has_key2(map4, key) {
-  return map4 && map4.has(key);
+function has_key2(map6, key) {
+  return map6 && map6.has(key);
 }
-function insert2(map4, key, value2) {
-  map4 ??= /* @__PURE__ */ new Map();
-  map4.set(key, value2);
-  return map4;
+function insert2(map6, key, value2) {
+  map6 ??= /* @__PURE__ */ new Map();
+  map6.set(key, value2);
+  return map6;
 }
-function remove(map4, key) {
-  map4?.delete(key);
-  return map4;
+function remove(map6, key) {
+  map6?.delete(key);
+  return map6;
 }
 
 // build/dev/javascript/lustre/lustre/vdom/path.mjs
@@ -3024,9 +3152,9 @@ var Key = class extends CustomType {
   }
 };
 var Index = class extends CustomType {
-  constructor(index4, parent) {
+  constructor(index5, parent) {
     super();
-    this.index = index4;
+    this.index = index5;
     this.parent = parent;
   }
 };
@@ -3049,9 +3177,9 @@ function do_matches(loop$path, loop$candidates) {
     }
   }
 }
-function add2(parent, index4, key) {
+function add2(parent, index5, key) {
   if (key === "") {
-    return new Index(index4, parent);
+    return new Index(index5, parent);
   } else {
     return new Key(key, parent);
   }
@@ -3075,12 +3203,12 @@ function do_to_string(loop$path, loop$acc) {
       loop$path = parent;
       loop$acc = prepend(separator_element, prepend(key, acc));
     } else {
-      let index4 = path2.index;
+      let index5 = path2.index;
       let parent = path2.parent;
       loop$path = parent;
       loop$acc = prepend(
         separator_element,
-        prepend(to_string(index4), acc)
+        prepend(to_string(index5), acc)
       );
     }
   }
@@ -3271,12 +3399,12 @@ var isEqual2 = (a2, b) => {
   return areObjectsEqual(a2, b);
 };
 var areArraysEqual = (a2, b) => {
-  let index4 = a2.length;
-  if (index4 !== b.length) {
+  let index5 = a2.length;
+  if (index5 !== b.length) {
     return false;
   }
-  while (index4--) {
-    if (!isEqual2(a2[index4], b[index4])) {
+  while (index5--) {
+    if (!isEqual2(a2[index5], b[index5])) {
       return false;
     }
   }
@@ -3284,12 +3412,12 @@ var areArraysEqual = (a2, b) => {
 };
 var areObjectsEqual = (a2, b) => {
   const properties = Object.keys(a2);
-  let index4 = properties.length;
-  if (Object.keys(b).length !== index4) {
+  let index5 = properties.length;
+  if (Object.keys(b).length !== index5) {
     return false;
   }
-  while (index4--) {
-    const property3 = properties[index4];
+  while (index5--) {
+    const property3 = properties[index5];
     if (!Object.hasOwn(b, property3)) {
       return false;
     }
@@ -3514,8 +3642,8 @@ function do_add_child(handlers, mapper, parent, child_index, child) {
     return add_attributes(handlers, composed_mapper, path2, attributes);
   }
 }
-function add_child(events, mapper, parent, index4, child) {
-  let handlers = do_add_child(events.handlers, mapper, parent, index4, child);
+function add_child(events, mapper, parent, index5, child) {
+  let handlers = do_add_child(events.handlers, mapper, parent, index5, child);
   return new Events(
     handlers,
     events.dispatched_paths,
@@ -3614,9 +3742,9 @@ function select(attrs, children) {
 
 // build/dev/javascript/lustre/lustre/vdom/patch.mjs
 var Patch = class extends CustomType {
-  constructor(index4, removed, changes, children) {
+  constructor(index5, removed, changes, children) {
     super();
-    this.index = index4;
+    this.index = index5;
     this.removed = removed;
     this.changes = changes;
     this.children = children;
@@ -3653,18 +3781,18 @@ var Move = class extends CustomType {
   }
 };
 var Replace = class extends CustomType {
-  constructor(kind, index4, with$) {
+  constructor(kind, index5, with$) {
     super();
     this.kind = kind;
-    this.index = index4;
+    this.index = index5;
     this.with = with$;
   }
 };
 var Remove = class extends CustomType {
-  constructor(kind, index4) {
+  constructor(kind, index5) {
     super();
     this.kind = kind;
-    this.index = index4;
+    this.index = index5;
   }
 };
 var Insert = class extends CustomType {
@@ -3675,8 +3803,8 @@ var Insert = class extends CustomType {
     this.before = before;
   }
 };
-function new$5(index4, removed, changes, children) {
-  return new Patch(index4, removed, changes, children);
+function new$5(index5, removed, changes, children) {
+  return new Patch(index5, removed, changes, children);
 }
 var replace_text_kind = 0;
 function replace_text(content) {
@@ -3695,12 +3823,12 @@ function move(key, before) {
   return new Move(move_kind, key, before);
 }
 var remove_kind = 4;
-function remove2(index4) {
-  return new Remove(remove_kind, index4);
+function remove2(index5) {
+  return new Remove(remove_kind, index5);
 }
 var replace_kind = 5;
-function replace2(index4, with$) {
-  return new Replace(replace_kind, index4, with$);
+function replace2(index5, with$) {
+  return new Replace(replace_kind, index5, with$);
 }
 var insert_kind = 6;
 function insert3(children, before) {
@@ -4135,8 +4263,8 @@ function do_diff(loop$old, loop$old_keyed, loop$new, loop$new_keyed, loop$moved,
               loop$events = events;
             }
           } else {
-            let index4 = node_index - moved_offset;
-            let changes$1 = prepend(remove2(index4), changes);
+            let index5 = node_index - moved_offset;
+            let changes$1 = prepend(remove2(index5), changes);
             let events$1 = remove_child(events, path2, node_index, prev);
             let moved_offset$1 = moved_offset - 1;
             loop$old = old_remaining;
@@ -4687,10 +4815,10 @@ var MetadataNode = class {
     return this.kind === fragment_kind ? this.node.parentNode : this.node;
   }
 };
-var insertMetadataChild = (kind, parent, node, index4, key) => {
+var insertMetadataChild = (kind, parent, node, index5, key) => {
   const child = new MetadataNode(kind, parent, node, key);
   node[meta] = child;
-  parent?.children.splice(index4, 0, child);
+  parent?.children.splice(index5, 0, child);
   return child;
 };
 var getPath = (node) => {
@@ -4699,8 +4827,8 @@ var getPath = (node) => {
     if (current.key) {
       path2 = `${separator_element}${current.key}${path2}`;
     } else {
-      const index4 = current.parent.children.indexOf(current);
-      path2 = `${separator_element}${index4}${path2}`;
+      const index5 = current.parent.children.indexOf(current);
+      path2 = `${separator_element}${index5}${path2}`;
     }
   }
   return path2.slice(1);
@@ -4775,17 +4903,17 @@ var Reconciler = class {
     this.#insertChildren(fragment3, null, parent, before | 0, children);
     insertBefore(parent.parentNode, fragment3, beforeEl);
   }
-  #replace(parent, { index: index4, with: child }) {
-    this.#removeChildren(parent, index4 | 0, 1);
-    const beforeEl = this.#getReference(parent, index4);
-    this.#insertChild(parent.parentNode, beforeEl, parent, index4 | 0, child);
+  #replace(parent, { index: index5, with: child }) {
+    this.#removeChildren(parent, index5 | 0, 1);
+    const beforeEl = this.#getReference(parent, index5);
+    this.#insertChild(parent.parentNode, beforeEl, parent, index5 | 0, child);
   }
-  #getReference(node, index4) {
-    index4 = index4 | 0;
+  #getReference(node, index5) {
+    index5 = index5 | 0;
     const { children } = node;
     const childCount = children.length;
-    if (index4 < childCount) {
-      return children[index4].node;
+    if (index5 < childCount) {
+      return children[index5].node;
     }
     let lastChild = children[childCount - 1];
     if (!lastChild && node.kind !== fragment_kind) return null;
@@ -4824,12 +4952,12 @@ var Reconciler = class {
       }
     }
   }
-  #remove(parent, { index: index4 }) {
-    this.#removeChildren(parent, index4, 1);
+  #remove(parent, { index: index5 }) {
+    this.#removeChildren(parent, index5, 1);
   }
-  #removeChildren(parent, index4, count) {
+  #removeChildren(parent, index5, count) {
     const { children, parentNode } = parent;
-    const deleted = children.splice(index4, count);
+    const deleted = children.splice(index5, count);
     for (let i = 0; i < deleted.length; ++i) {
       const { kind, node, children: nestedChildren } = deleted[i];
       removeChild(parentNode, node);
@@ -4869,27 +4997,27 @@ var Reconciler = class {
     setInnerHtml(node, inner_html ?? "");
   }
   // INSERT --------------------------------------------------------------------
-  #insertChildren(domParent, beforeEl, metaParent, index4, children) {
+  #insertChildren(domParent, beforeEl, metaParent, index5, children) {
     iterate(
       children,
-      (child) => this.#insertChild(domParent, beforeEl, metaParent, index4++, child)
+      (child) => this.#insertChild(domParent, beforeEl, metaParent, index5++, child)
     );
   }
-  #insertChild(domParent, beforeEl, metaParent, index4, vnode) {
+  #insertChild(domParent, beforeEl, metaParent, index5, vnode) {
     switch (vnode.kind) {
       case element_kind: {
-        const node = this.#createElement(metaParent, index4, vnode);
+        const node = this.#createElement(metaParent, index5, vnode);
         this.#insertChildren(node, null, node[meta], 0, vnode.children);
         insertBefore(domParent, node, beforeEl);
         break;
       }
       case text_kind: {
-        const node = this.#createTextNode(metaParent, index4, vnode);
+        const node = this.#createTextNode(metaParent, index5, vnode);
         insertBefore(domParent, node, beforeEl);
         break;
       }
       case fragment_kind: {
-        const head = this.#createTextNode(metaParent, index4, vnode);
+        const head = this.#createTextNode(metaParent, index5, vnode);
         insertBefore(domParent, head, beforeEl);
         this.#insertChildren(
           domParent,
@@ -4901,25 +5029,25 @@ var Reconciler = class {
         break;
       }
       case unsafe_inner_html_kind: {
-        const node = this.#createElement(metaParent, index4, vnode);
+        const node = this.#createElement(metaParent, index5, vnode);
         this.#replaceInnerHtml({ node }, vnode);
         insertBefore(domParent, node, beforeEl);
         break;
       }
     }
   }
-  #createElement(parent, index4, { kind, key, tag, namespace: namespace2, attributes }) {
+  #createElement(parent, index5, { kind, key, tag, namespace: namespace2, attributes }) {
     const node = createElementNS(namespace2 || NAMESPACE_HTML, tag);
-    insertMetadataChild(kind, parent, node, index4, key);
+    insertMetadataChild(kind, parent, node, index5, key);
     if (this.#exposeKeys && key) {
       setAttribute(node, "data-lustre-key", key);
     }
     iterate(attributes, (attribute3) => this.#createAttribute(node, attribute3));
     return node;
   }
-  #createTextNode(parent, index4, { kind, key, content }) {
+  #createTextNode(parent, index5, { kind, key, content }) {
     const node = createTextNode(content ?? "");
-    insertMetadataChild(kind, parent, node, index4, key);
+    insertMetadataChild(kind, parent, node, index5, key);
     return node;
   }
   #createAttribute(node, attribute3) {
@@ -4961,20 +5089,20 @@ var Reconciler = class {
       }
     }
   }
-  #updateDebounceThrottle(map4, name2, delay) {
-    const debounceOrThrottle = map4.get(name2);
+  #updateDebounceThrottle(map6, name2, delay) {
+    const debounceOrThrottle = map6.get(name2);
     if (delay > 0) {
       if (debounceOrThrottle) {
         debounceOrThrottle.delay = delay;
       } else {
-        map4.set(name2, { delay });
+        map6.set(name2, { delay });
       }
     } else if (debounceOrThrottle) {
       const { timeout } = debounceOrThrottle;
       if (timeout) {
         clearTimeout(timeout);
       }
-      map4.delete(name2);
+      map6.delete(name2);
     }
   }
   #handleEvent(attribute3, event4) {
@@ -5207,13 +5335,13 @@ var canVirtualiseNode = (node) => {
       return false;
   }
 };
-var virtualiseNode = (meta2, node, key, index4) => {
+var virtualiseNode = (meta2, node, key, index5) => {
   if (!canVirtualiseNode(node)) {
     return null;
   }
   switch (node.nodeType) {
     case ELEMENT_NODE: {
-      const childMeta = insertMetadataChild(element_kind, meta2, node, index4, key);
+      const childMeta = insertMetadataChild(element_kind, meta2, node, index5, key);
       const tag = node.localName;
       const namespace2 = node.namespaceURI;
       const isHtmlElement = !namespace2 || namespace2 === NAMESPACE_HTML;
@@ -5226,7 +5354,7 @@ var virtualiseNode = (meta2, node, key, index4) => {
       return vnode;
     }
     case TEXT_NODE:
-      insertMetadataChild(text_kind, meta2, node, index4, null);
+      insertMetadataChild(text_kind, meta2, node, index5, null);
       return text2(node.data);
     default:
       return null;
@@ -5253,13 +5381,13 @@ var virtualiseChildNodes = (meta2, node) => {
   let children = null;
   let child = node.firstChild;
   let ptr = null;
-  let index4 = 0;
+  let index5 = 0;
   while (child) {
     const key = child.nodeType === ELEMENT_NODE ? child.getAttribute("data-lustre-key") : null;
     if (key != null) {
       child.removeAttribute("data-lustre-key");
     }
-    const vnode = virtualiseNode(meta2, child, key, index4);
+    const vnode = virtualiseNode(meta2, child, key, index5);
     const next = child.nextSibling;
     if (vnode) {
       const list_node = new NonEmpty([key ?? "", vnode], null);
@@ -5268,7 +5396,7 @@ var virtualiseChildNodes = (meta2, node) => {
       } else {
         ptr = children = list_node;
       }
-      index4 += 1;
+      index5 += 1;
     } else {
       node.removeChild(child);
     }
@@ -5279,10 +5407,10 @@ var virtualiseChildNodes = (meta2, node) => {
   return children;
 };
 var virtualiseAttributes = (node) => {
-  let index4 = node.attributes.length;
+  let index5 = node.attributes.length;
   let attributes = empty_list;
-  while (index4-- > 0) {
-    const attr = node.attributes[index4];
+  while (index5-- > 0) {
+    const attr = node.attributes[index5];
     if (attr.name === "xmlns") {
       continue;
     }
@@ -5474,8 +5602,8 @@ async function adoptStylesheets(shadowRoot) {
   )) {
     if (node.sheet) continue;
     pendingParentStylesheets.push(
-      new Promise((resolve, reject) => {
-        node.addEventListener("load", resolve);
+      new Promise((resolve2, reject) => {
+        node.addEventListener("load", resolve2);
         node.addEventListener("error", reject);
       })
     );
@@ -5832,8 +5960,8 @@ function path(attrs) {
 }
 
 // build/dev/javascript/gleam_stdlib/gleam/pair.mjs
-function new$7(first, second) {
-  return [first, second];
+function new$7(first2, second) {
+  return [first2, second];
 }
 
 // build/dev/javascript/lustre/lustre/event.mjs
@@ -5948,6 +6076,801 @@ function on_submit(msg) {
   return prevent_default(_pipe);
 }
 
+// build/dev/javascript/gleam_stdlib/gleam/uri.mjs
+var Uri = class extends CustomType {
+  constructor(scheme, userinfo, host, port, path2, query, fragment3) {
+    super();
+    this.scheme = scheme;
+    this.userinfo = userinfo;
+    this.host = host;
+    this.port = port;
+    this.path = path2;
+    this.query = query;
+    this.fragment = fragment3;
+  }
+};
+function is_valid_host_within_brackets_char(char) {
+  return 48 >= char && char <= 57 || 65 >= char && char <= 90 || 97 >= char && char <= 122 || char === 58 || char === 46;
+}
+function parse_fragment(rest, pieces) {
+  return new Ok(
+    new Uri(
+      pieces.scheme,
+      pieces.userinfo,
+      pieces.host,
+      pieces.port,
+      pieces.path,
+      pieces.query,
+      new Some(rest)
+    )
+  );
+}
+function parse_query_with_question_mark_loop(loop$original, loop$uri_string, loop$pieces, loop$size) {
+  while (true) {
+    let original = loop$original;
+    let uri_string = loop$uri_string;
+    let pieces = loop$pieces;
+    let size2 = loop$size;
+    if (uri_string.startsWith("#")) {
+      if (size2 === 0) {
+        let rest = uri_string.slice(1);
+        return parse_fragment(rest, pieces);
+      } else {
+        let rest = uri_string.slice(1);
+        let query = string_codeunit_slice(original, 0, size2);
+        let pieces$1 = new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          pieces.host,
+          pieces.port,
+          pieces.path,
+          new Some(query),
+          pieces.fragment
+        );
+        return parse_fragment(rest, pieces$1);
+      }
+    } else if (uri_string === "") {
+      return new Ok(
+        new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          pieces.host,
+          pieces.port,
+          pieces.path,
+          new Some(original),
+          pieces.fragment
+        )
+      );
+    } else {
+      let $ = pop_codeunit(uri_string);
+      let rest;
+      rest = $[1];
+      loop$original = original;
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$size = size2 + 1;
+    }
+  }
+}
+function parse_query_with_question_mark(uri_string, pieces) {
+  return parse_query_with_question_mark_loop(uri_string, uri_string, pieces, 0);
+}
+function parse_path_loop(loop$original, loop$uri_string, loop$pieces, loop$size) {
+  while (true) {
+    let original = loop$original;
+    let uri_string = loop$uri_string;
+    let pieces = loop$pieces;
+    let size2 = loop$size;
+    if (uri_string.startsWith("?")) {
+      let rest = uri_string.slice(1);
+      let path2 = string_codeunit_slice(original, 0, size2);
+      let pieces$1 = new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        pieces.host,
+        pieces.port,
+        path2,
+        pieces.query,
+        pieces.fragment
+      );
+      return parse_query_with_question_mark(rest, pieces$1);
+    } else if (uri_string.startsWith("#")) {
+      let rest = uri_string.slice(1);
+      let path2 = string_codeunit_slice(original, 0, size2);
+      let pieces$1 = new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        pieces.host,
+        pieces.port,
+        path2,
+        pieces.query,
+        pieces.fragment
+      );
+      return parse_fragment(rest, pieces$1);
+    } else if (uri_string === "") {
+      return new Ok(
+        new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          pieces.host,
+          pieces.port,
+          original,
+          pieces.query,
+          pieces.fragment
+        )
+      );
+    } else {
+      let $ = pop_codeunit(uri_string);
+      let rest;
+      rest = $[1];
+      loop$original = original;
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$size = size2 + 1;
+    }
+  }
+}
+function parse_path(uri_string, pieces) {
+  return parse_path_loop(uri_string, uri_string, pieces, 0);
+}
+function parse_port_loop(loop$uri_string, loop$pieces, loop$port) {
+  while (true) {
+    let uri_string = loop$uri_string;
+    let pieces = loop$pieces;
+    let port = loop$port;
+    if (uri_string.startsWith("0")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10;
+    } else if (uri_string.startsWith("1")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10 + 1;
+    } else if (uri_string.startsWith("2")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10 + 2;
+    } else if (uri_string.startsWith("3")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10 + 3;
+    } else if (uri_string.startsWith("4")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10 + 4;
+    } else if (uri_string.startsWith("5")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10 + 5;
+    } else if (uri_string.startsWith("6")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10 + 6;
+    } else if (uri_string.startsWith("7")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10 + 7;
+    } else if (uri_string.startsWith("8")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10 + 8;
+    } else if (uri_string.startsWith("9")) {
+      let rest = uri_string.slice(1);
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$port = port * 10 + 9;
+    } else if (uri_string.startsWith("?")) {
+      let rest = uri_string.slice(1);
+      let pieces$1 = new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        pieces.host,
+        new Some(port),
+        pieces.path,
+        pieces.query,
+        pieces.fragment
+      );
+      return parse_query_with_question_mark(rest, pieces$1);
+    } else if (uri_string.startsWith("#")) {
+      let rest = uri_string.slice(1);
+      let pieces$1 = new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        pieces.host,
+        new Some(port),
+        pieces.path,
+        pieces.query,
+        pieces.fragment
+      );
+      return parse_fragment(rest, pieces$1);
+    } else if (uri_string.startsWith("/")) {
+      let pieces$1 = new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        pieces.host,
+        new Some(port),
+        pieces.path,
+        pieces.query,
+        pieces.fragment
+      );
+      return parse_path(uri_string, pieces$1);
+    } else if (uri_string === "") {
+      return new Ok(
+        new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          pieces.host,
+          new Some(port),
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        )
+      );
+    } else {
+      return new Error(void 0);
+    }
+  }
+}
+function parse_port(uri_string, pieces) {
+  if (uri_string.startsWith(":0")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 0);
+  } else if (uri_string.startsWith(":1")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 1);
+  } else if (uri_string.startsWith(":2")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 2);
+  } else if (uri_string.startsWith(":3")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 3);
+  } else if (uri_string.startsWith(":4")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 4);
+  } else if (uri_string.startsWith(":5")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 5);
+  } else if (uri_string.startsWith(":6")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 6);
+  } else if (uri_string.startsWith(":7")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 7);
+  } else if (uri_string.startsWith(":8")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 8);
+  } else if (uri_string.startsWith(":9")) {
+    let rest = uri_string.slice(2);
+    return parse_port_loop(rest, pieces, 9);
+  } else if (uri_string === ":") {
+    return new Ok(pieces);
+  } else if (uri_string === "") {
+    return new Ok(pieces);
+  } else if (uri_string.startsWith("?")) {
+    let rest = uri_string.slice(1);
+    return parse_query_with_question_mark(rest, pieces);
+  } else if (uri_string.startsWith(":?")) {
+    let rest = uri_string.slice(2);
+    return parse_query_with_question_mark(rest, pieces);
+  } else if (uri_string.startsWith("#")) {
+    let rest = uri_string.slice(1);
+    return parse_fragment(rest, pieces);
+  } else if (uri_string.startsWith(":#")) {
+    let rest = uri_string.slice(2);
+    return parse_fragment(rest, pieces);
+  } else if (uri_string.startsWith("/")) {
+    return parse_path(uri_string, pieces);
+  } else if (uri_string.startsWith(":")) {
+    let rest = uri_string.slice(1);
+    if (rest.startsWith("/")) {
+      return parse_path(rest, pieces);
+    } else {
+      return new Error(void 0);
+    }
+  } else {
+    return new Error(void 0);
+  }
+}
+function parse_host_outside_of_brackets_loop(loop$original, loop$uri_string, loop$pieces, loop$size) {
+  while (true) {
+    let original = loop$original;
+    let uri_string = loop$uri_string;
+    let pieces = loop$pieces;
+    let size2 = loop$size;
+    if (uri_string === "") {
+      return new Ok(
+        new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          new Some(original),
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        )
+      );
+    } else if (uri_string.startsWith(":")) {
+      let host = string_codeunit_slice(original, 0, size2);
+      let pieces$1 = new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        new Some(host),
+        pieces.port,
+        pieces.path,
+        pieces.query,
+        pieces.fragment
+      );
+      return parse_port(uri_string, pieces$1);
+    } else if (uri_string.startsWith("/")) {
+      let host = string_codeunit_slice(original, 0, size2);
+      let pieces$1 = new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        new Some(host),
+        pieces.port,
+        pieces.path,
+        pieces.query,
+        pieces.fragment
+      );
+      return parse_path(uri_string, pieces$1);
+    } else if (uri_string.startsWith("?")) {
+      let rest = uri_string.slice(1);
+      let host = string_codeunit_slice(original, 0, size2);
+      let pieces$1 = new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        new Some(host),
+        pieces.port,
+        pieces.path,
+        pieces.query,
+        pieces.fragment
+      );
+      return parse_query_with_question_mark(rest, pieces$1);
+    } else if (uri_string.startsWith("#")) {
+      let rest = uri_string.slice(1);
+      let host = string_codeunit_slice(original, 0, size2);
+      let pieces$1 = new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        new Some(host),
+        pieces.port,
+        pieces.path,
+        pieces.query,
+        pieces.fragment
+      );
+      return parse_fragment(rest, pieces$1);
+    } else {
+      let $ = pop_codeunit(uri_string);
+      let rest;
+      rest = $[1];
+      loop$original = original;
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$size = size2 + 1;
+    }
+  }
+}
+function parse_host_within_brackets_loop(loop$original, loop$uri_string, loop$pieces, loop$size) {
+  while (true) {
+    let original = loop$original;
+    let uri_string = loop$uri_string;
+    let pieces = loop$pieces;
+    let size2 = loop$size;
+    if (uri_string === "") {
+      return new Ok(
+        new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          new Some(uri_string),
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        )
+      );
+    } else if (uri_string.startsWith("]")) {
+      if (size2 === 0) {
+        let rest = uri_string.slice(1);
+        return parse_port(rest, pieces);
+      } else {
+        let rest = uri_string.slice(1);
+        let host = string_codeunit_slice(original, 0, size2 + 1);
+        let pieces$1 = new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          new Some(host),
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        );
+        return parse_port(rest, pieces$1);
+      }
+    } else if (uri_string.startsWith("/")) {
+      if (size2 === 0) {
+        return parse_path(uri_string, pieces);
+      } else {
+        let host = string_codeunit_slice(original, 0, size2);
+        let pieces$1 = new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          new Some(host),
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        );
+        return parse_path(uri_string, pieces$1);
+      }
+    } else if (uri_string.startsWith("?")) {
+      if (size2 === 0) {
+        let rest = uri_string.slice(1);
+        return parse_query_with_question_mark(rest, pieces);
+      } else {
+        let rest = uri_string.slice(1);
+        let host = string_codeunit_slice(original, 0, size2);
+        let pieces$1 = new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          new Some(host),
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        );
+        return parse_query_with_question_mark(rest, pieces$1);
+      }
+    } else if (uri_string.startsWith("#")) {
+      if (size2 === 0) {
+        let rest = uri_string.slice(1);
+        return parse_fragment(rest, pieces);
+      } else {
+        let rest = uri_string.slice(1);
+        let host = string_codeunit_slice(original, 0, size2);
+        let pieces$1 = new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          new Some(host),
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        );
+        return parse_fragment(rest, pieces$1);
+      }
+    } else {
+      let $ = pop_codeunit(uri_string);
+      let char;
+      let rest;
+      char = $[0];
+      rest = $[1];
+      let $1 = is_valid_host_within_brackets_char(char);
+      if ($1) {
+        loop$original = original;
+        loop$uri_string = rest;
+        loop$pieces = pieces;
+        loop$size = size2 + 1;
+      } else {
+        return parse_host_outside_of_brackets_loop(
+          original,
+          original,
+          pieces,
+          0
+        );
+      }
+    }
+  }
+}
+function parse_host_within_brackets(uri_string, pieces) {
+  return parse_host_within_brackets_loop(uri_string, uri_string, pieces, 0);
+}
+function parse_host_outside_of_brackets(uri_string, pieces) {
+  return parse_host_outside_of_brackets_loop(uri_string, uri_string, pieces, 0);
+}
+function parse_host(uri_string, pieces) {
+  if (uri_string.startsWith("[")) {
+    return parse_host_within_brackets(uri_string, pieces);
+  } else if (uri_string.startsWith(":")) {
+    let pieces$1 = new Uri(
+      pieces.scheme,
+      pieces.userinfo,
+      new Some(""),
+      pieces.port,
+      pieces.path,
+      pieces.query,
+      pieces.fragment
+    );
+    return parse_port(uri_string, pieces$1);
+  } else if (uri_string === "") {
+    return new Ok(
+      new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        new Some(""),
+        pieces.port,
+        pieces.path,
+        pieces.query,
+        pieces.fragment
+      )
+    );
+  } else {
+    return parse_host_outside_of_brackets(uri_string, pieces);
+  }
+}
+function parse_userinfo_loop(loop$original, loop$uri_string, loop$pieces, loop$size) {
+  while (true) {
+    let original = loop$original;
+    let uri_string = loop$uri_string;
+    let pieces = loop$pieces;
+    let size2 = loop$size;
+    if (uri_string.startsWith("@")) {
+      if (size2 === 0) {
+        let rest = uri_string.slice(1);
+        return parse_host(rest, pieces);
+      } else {
+        let rest = uri_string.slice(1);
+        let userinfo = string_codeunit_slice(original, 0, size2);
+        let pieces$1 = new Uri(
+          pieces.scheme,
+          new Some(userinfo),
+          pieces.host,
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        );
+        return parse_host(rest, pieces$1);
+      }
+    } else if (uri_string === "") {
+      return parse_host(original, pieces);
+    } else if (uri_string.startsWith("/")) {
+      return parse_host(original, pieces);
+    } else if (uri_string.startsWith("?")) {
+      return parse_host(original, pieces);
+    } else if (uri_string.startsWith("#")) {
+      return parse_host(original, pieces);
+    } else {
+      let $ = pop_codeunit(uri_string);
+      let rest;
+      rest = $[1];
+      loop$original = original;
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$size = size2 + 1;
+    }
+  }
+}
+function parse_authority_pieces(string5, pieces) {
+  return parse_userinfo_loop(string5, string5, pieces, 0);
+}
+function parse_authority_with_slashes(uri_string, pieces) {
+  if (uri_string === "//") {
+    return new Ok(
+      new Uri(
+        pieces.scheme,
+        pieces.userinfo,
+        new Some(""),
+        pieces.port,
+        pieces.path,
+        pieces.query,
+        pieces.fragment
+      )
+    );
+  } else if (uri_string.startsWith("//")) {
+    let rest = uri_string.slice(2);
+    return parse_authority_pieces(rest, pieces);
+  } else {
+    return parse_path(uri_string, pieces);
+  }
+}
+function parse_scheme_loop(loop$original, loop$uri_string, loop$pieces, loop$size) {
+  while (true) {
+    let original = loop$original;
+    let uri_string = loop$uri_string;
+    let pieces = loop$pieces;
+    let size2 = loop$size;
+    if (uri_string.startsWith("/")) {
+      if (size2 === 0) {
+        return parse_authority_with_slashes(uri_string, pieces);
+      } else {
+        let scheme = string_codeunit_slice(original, 0, size2);
+        let pieces$1 = new Uri(
+          new Some(lowercase(scheme)),
+          pieces.userinfo,
+          pieces.host,
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        );
+        return parse_authority_with_slashes(uri_string, pieces$1);
+      }
+    } else if (uri_string.startsWith("?")) {
+      if (size2 === 0) {
+        let rest = uri_string.slice(1);
+        return parse_query_with_question_mark(rest, pieces);
+      } else {
+        let rest = uri_string.slice(1);
+        let scheme = string_codeunit_slice(original, 0, size2);
+        let pieces$1 = new Uri(
+          new Some(lowercase(scheme)),
+          pieces.userinfo,
+          pieces.host,
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        );
+        return parse_query_with_question_mark(rest, pieces$1);
+      }
+    } else if (uri_string.startsWith("#")) {
+      if (size2 === 0) {
+        let rest = uri_string.slice(1);
+        return parse_fragment(rest, pieces);
+      } else {
+        let rest = uri_string.slice(1);
+        let scheme = string_codeunit_slice(original, 0, size2);
+        let pieces$1 = new Uri(
+          new Some(lowercase(scheme)),
+          pieces.userinfo,
+          pieces.host,
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        );
+        return parse_fragment(rest, pieces$1);
+      }
+    } else if (uri_string.startsWith(":")) {
+      if (size2 === 0) {
+        return new Error(void 0);
+      } else {
+        let rest = uri_string.slice(1);
+        let scheme = string_codeunit_slice(original, 0, size2);
+        let pieces$1 = new Uri(
+          new Some(lowercase(scheme)),
+          pieces.userinfo,
+          pieces.host,
+          pieces.port,
+          pieces.path,
+          pieces.query,
+          pieces.fragment
+        );
+        return parse_authority_with_slashes(rest, pieces$1);
+      }
+    } else if (uri_string === "") {
+      return new Ok(
+        new Uri(
+          pieces.scheme,
+          pieces.userinfo,
+          pieces.host,
+          pieces.port,
+          original,
+          pieces.query,
+          pieces.fragment
+        )
+      );
+    } else {
+      let $ = pop_codeunit(uri_string);
+      let rest;
+      rest = $[1];
+      loop$original = original;
+      loop$uri_string = rest;
+      loop$pieces = pieces;
+      loop$size = size2 + 1;
+    }
+  }
+}
+function to_string5(uri) {
+  let _block;
+  let $ = uri.fragment;
+  if ($ instanceof Some) {
+    let fragment3 = $[0];
+    _block = toList(["#", fragment3]);
+  } else {
+    _block = toList([]);
+  }
+  let parts = _block;
+  let _block$1;
+  let $1 = uri.query;
+  if ($1 instanceof Some) {
+    let query = $1[0];
+    _block$1 = prepend("?", prepend(query, parts));
+  } else {
+    _block$1 = parts;
+  }
+  let parts$1 = _block$1;
+  let parts$2 = prepend(uri.path, parts$1);
+  let _block$2;
+  let $2 = uri.host;
+  let $3 = starts_with(uri.path, "/");
+  if (!$3 && $2 instanceof Some) {
+    let host = $2[0];
+    if (host !== "") {
+      _block$2 = prepend("/", parts$2);
+    } else {
+      _block$2 = parts$2;
+    }
+  } else {
+    _block$2 = parts$2;
+  }
+  let parts$3 = _block$2;
+  let _block$3;
+  let $4 = uri.host;
+  let $5 = uri.port;
+  if ($5 instanceof Some && $4 instanceof Some) {
+    let port = $5[0];
+    _block$3 = prepend(":", prepend(to_string(port), parts$3));
+  } else {
+    _block$3 = parts$3;
+  }
+  let parts$4 = _block$3;
+  let _block$4;
+  let $6 = uri.scheme;
+  let $7 = uri.userinfo;
+  let $8 = uri.host;
+  if ($8 instanceof Some) {
+    if ($7 instanceof Some) {
+      if ($6 instanceof Some) {
+        let h = $8[0];
+        let u = $7[0];
+        let s = $6[0];
+        _block$4 = prepend(
+          s,
+          prepend(
+            "://",
+            prepend(u, prepend("@", prepend(h, parts$4)))
+          )
+        );
+      } else {
+        _block$4 = parts$4;
+      }
+    } else if ($6 instanceof Some) {
+      let h = $8[0];
+      let s = $6[0];
+      _block$4 = prepend(s, prepend("://", prepend(h, parts$4)));
+    } else {
+      let h = $8[0];
+      _block$4 = prepend("//", prepend(h, parts$4));
+    }
+  } else if ($7 instanceof Some) {
+    if ($6 instanceof Some) {
+      let s = $6[0];
+      _block$4 = prepend(s, prepend(":", parts$4));
+    } else {
+      _block$4 = parts$4;
+    }
+  } else if ($6 instanceof Some) {
+    let s = $6[0];
+    _block$4 = prepend(s, prepend(":", parts$4));
+  } else {
+    _block$4 = parts$4;
+  }
+  let parts$5 = _block$4;
+  return concat2(parts$5);
+}
+var empty3 = /* @__PURE__ */ new Uri(
+  /* @__PURE__ */ new None(),
+  /* @__PURE__ */ new None(),
+  /* @__PURE__ */ new None(),
+  /* @__PURE__ */ new None(),
+  "",
+  /* @__PURE__ */ new None(),
+  /* @__PURE__ */ new None()
+);
+function parse2(uri_string) {
+  return parse_scheme_loop(uri_string, uri_string, empty3, 0);
+}
+
 // build/dev/javascript/formal/formal/form.mjs
 var Form = class extends CustomType {
   constructor(translator, values3, errors, run3) {
@@ -6045,7 +6968,7 @@ var DontCheck = class extends CustomType {
 function field_value(form3, name2) {
   let _pipe = form3.values;
   let _pipe$1 = key_find(_pipe, name2);
-  return unwrap(_pipe$1, "");
+  return unwrap2(_pipe$1, "");
 }
 function run2(form3) {
   let $ = form3.run(form3.values, toList([]));
@@ -6538,34 +7461,407 @@ function install_keyboard_shortcuts(dispatch, event_type, shortcuts) {
   );
 }
 
+// build/dev/javascript/gleam_http/gleam/http.mjs
+var Get = class extends CustomType {
+};
+var Post = class extends CustomType {
+};
+var Head = class extends CustomType {
+};
+var Put = class extends CustomType {
+};
+var Delete = class extends CustomType {
+};
+var Trace = class extends CustomType {
+};
+var Connect = class extends CustomType {
+};
+var Options = class extends CustomType {
+};
+var Patch2 = class extends CustomType {
+};
+var Http = class extends CustomType {
+};
+var Https = class extends CustomType {
+};
+function method_to_string(method) {
+  if (method instanceof Get) {
+    return "GET";
+  } else if (method instanceof Post) {
+    return "POST";
+  } else if (method instanceof Head) {
+    return "HEAD";
+  } else if (method instanceof Put) {
+    return "PUT";
+  } else if (method instanceof Delete) {
+    return "DELETE";
+  } else if (method instanceof Trace) {
+    return "TRACE";
+  } else if (method instanceof Connect) {
+    return "CONNECT";
+  } else if (method instanceof Options) {
+    return "OPTIONS";
+  } else if (method instanceof Patch2) {
+    return "PATCH";
+  } else {
+    let method$1 = method[0];
+    return method$1;
+  }
+}
+function scheme_to_string(scheme) {
+  if (scheme instanceof Http) {
+    return "http";
+  } else {
+    return "https";
+  }
+}
+function scheme_from_string(scheme) {
+  let $ = lowercase(scheme);
+  if ($ === "http") {
+    return new Ok(new Http());
+  } else if ($ === "https") {
+    return new Ok(new Https());
+  } else {
+    return new Error(void 0);
+  }
+}
+
+// build/dev/javascript/gleam_http/gleam/http/request.mjs
+var Request = class extends CustomType {
+  constructor(method, headers, body, scheme, host, port, path2, query) {
+    super();
+    this.method = method;
+    this.headers = headers;
+    this.body = body;
+    this.scheme = scheme;
+    this.host = host;
+    this.port = port;
+    this.path = path2;
+    this.query = query;
+  }
+};
+function to_uri(request) {
+  return new Uri(
+    new Some(scheme_to_string(request.scheme)),
+    new None(),
+    new Some(request.host),
+    request.port,
+    request.path,
+    request.query,
+    new None()
+  );
+}
+function from_uri(uri) {
+  return try$(
+    (() => {
+      let _pipe = uri.scheme;
+      let _pipe$1 = unwrap(_pipe, "");
+      return scheme_from_string(_pipe$1);
+    })(),
+    (scheme) => {
+      return try$(
+        (() => {
+          let _pipe = uri.host;
+          return to_result(_pipe, void 0);
+        })(),
+        (host) => {
+          let req = new Request(
+            new Get(),
+            toList([]),
+            "",
+            scheme,
+            host,
+            uri.port,
+            uri.path,
+            uri.query
+          );
+          return new Ok(req);
+        }
+      );
+    }
+  );
+}
+function to(url) {
+  let _pipe = url;
+  let _pipe$1 = parse2(_pipe);
+  return try$(_pipe$1, from_uri);
+}
+
+// build/dev/javascript/gleam_http/gleam/http/response.mjs
+var Response = class extends CustomType {
+  constructor(status, headers, body) {
+    super();
+    this.status = status;
+    this.headers = headers;
+    this.body = body;
+  }
+};
+
+// build/dev/javascript/gleam_javascript/gleam_javascript_ffi.mjs
+var PromiseLayer = class _PromiseLayer {
+  constructor(promise) {
+    this.promise = promise;
+  }
+  static wrap(value2) {
+    return value2 instanceof Promise ? new _PromiseLayer(value2) : value2;
+  }
+  static unwrap(value2) {
+    return value2 instanceof _PromiseLayer ? value2.promise : value2;
+  }
+};
+function resolve(value2) {
+  return Promise.resolve(PromiseLayer.wrap(value2));
+}
+function then_await(promise, fn) {
+  return promise.then((value2) => fn(PromiseLayer.unwrap(value2)));
+}
+function map_promise(promise, fn) {
+  return promise.then(
+    (value2) => PromiseLayer.wrap(fn(PromiseLayer.unwrap(value2)))
+  );
+}
+function rescue(promise, fn) {
+  return promise.catch((error) => fn(error));
+}
+
+// build/dev/javascript/gleam_javascript/gleam/javascript/promise.mjs
+function tap(promise, callback) {
+  let _pipe = promise;
+  return map_promise(
+    _pipe,
+    (a2) => {
+      callback(a2);
+      return a2;
+    }
+  );
+}
+function try_await(promise, callback) {
+  let _pipe = promise;
+  return then_await(
+    _pipe,
+    (result) => {
+      if (result instanceof Ok) {
+        let a2 = result[0];
+        return callback(a2);
+      } else {
+        let e = result[0];
+        return resolve(new Error(e));
+      }
+    }
+  );
+}
+
+// build/dev/javascript/gleam_fetch/gleam_fetch_ffi.mjs
+async function raw_send(request) {
+  try {
+    return new Ok(await fetch(request));
+  } catch (error) {
+    return new Error(new NetworkError(error.toString()));
+  }
+}
+function from_fetch_response(response) {
+  return new Response(
+    response.status,
+    List.fromArray([...response.headers]),
+    response
+  );
+}
+function request_common(request) {
+  let url = to_string5(to_uri(request));
+  let method = method_to_string(request.method).toUpperCase();
+  let options = {
+    headers: make_headers(request.headers),
+    method
+  };
+  return [url, options];
+}
+function to_fetch_request(request) {
+  let [url, options] = request_common(request);
+  if (options.method !== "GET" && options.method !== "HEAD") options.body = request.body;
+  return new globalThis.Request(url, options);
+}
+function make_headers(headersList) {
+  let headers = new globalThis.Headers();
+  for (let [k, v] of headersList) headers.append(k.toLowerCase(), v);
+  return headers;
+}
+async function read_text_body(response) {
+  let body;
+  try {
+    body = await response.body.text();
+  } catch (error) {
+    return new Error(new UnableToReadBody());
+  }
+  return new Ok(response.withFields({ body }));
+}
+
+// build/dev/javascript/gleam_fetch/gleam/fetch.mjs
+var NetworkError = class extends CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
+  }
+};
+var UnableToReadBody = class extends CustomType {
+};
+function send2(request) {
+  let _pipe = request;
+  let _pipe$1 = to_fetch_request(_pipe);
+  let _pipe$2 = raw_send(_pipe$1);
+  return try_await(
+    _pipe$2,
+    (resp) => {
+      return resolve(new Ok(from_fetch_response(resp)));
+    }
+  );
+}
+
+// build/dev/javascript/lustre_http/lustre_http.mjs
+var BadUrl = class extends CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
+  }
+};
+var InternalServerError = class extends CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
+  }
+};
+var JsonError = class extends CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
+  }
+};
+var NetworkError2 = class extends CustomType {
+};
+var NotFound = class extends CustomType {
+};
+var OtherError = class extends CustomType {
+  constructor($0, $1) {
+    super();
+    this[0] = $0;
+    this[1] = $1;
+  }
+};
+var Unauthorized = class extends CustomType {
+};
+var ExpectTextResponse = class extends CustomType {
+  constructor(run3) {
+    super();
+    this.run = run3;
+  }
+};
+function do_send(req, expect, dispatch) {
+  let _pipe = send2(req);
+  let _pipe$1 = try_await(_pipe, read_text_body);
+  let _pipe$2 = map_promise(
+    _pipe$1,
+    (response) => {
+      if (response instanceof Ok) {
+        let res = response[0];
+        return expect.run(new Ok(res));
+      } else {
+        return expect.run(new Error(new NetworkError2()));
+      }
+    }
+  );
+  let _pipe$3 = rescue(
+    _pipe$2,
+    (_) => {
+      return expect.run(new Error(new NetworkError2()));
+    }
+  );
+  tap(_pipe$3, dispatch);
+  return void 0;
+}
+function get2(url, expect) {
+  return from(
+    (dispatch) => {
+      let $ = to(url);
+      if ($ instanceof Ok) {
+        let req = $[0];
+        return do_send(req, expect, dispatch);
+      } else {
+        return dispatch(expect.run(new Error(new BadUrl(url))));
+      }
+    }
+  );
+}
+function response_to_result(response) {
+  let status = response.status;
+  if (200 <= status && status <= 299) {
+    let body = response.body;
+    return new Ok(body);
+  } else {
+    let $ = response.status;
+    if ($ === 401) {
+      return new Error(new Unauthorized());
+    } else if ($ === 404) {
+      return new Error(new NotFound());
+    } else if ($ === 500) {
+      let body = response.body;
+      return new Error(new InternalServerError(body));
+    } else {
+      let code = $;
+      let body = response.body;
+      return new Error(new OtherError(code, body));
+    }
+  }
+}
+function expect_json(decoder, to_msg) {
+  return new ExpectTextResponse(
+    (response) => {
+      let _pipe = response;
+      let _pipe$1 = then$(_pipe, response_to_result);
+      let _pipe$2 = then$(
+        _pipe$1,
+        (body) => {
+          let $ = parse(body, decoder);
+          if ($ instanceof Ok) {
+            return $;
+          } else {
+            let json_error = $[0];
+            return new Error(new JsonError(json_error));
+          }
+        }
+      );
+      return to_msg(_pipe$2);
+    }
+  );
+}
+
 // build/dev/javascript/viz/components/flow_map.ffi.mjs
 var CONFIG = {
   nodeRadius: 1.5,
-  arrowOffset: 2.5,
-  // nodeRadius + 1
   mapHeight: 0.6,
   // 60% of window height
   animationDuration: 150,
-  pathAnimationDuration: 300,
+  pathAnimationDuration: 150,
   hoverDuration: 200,
-  bundleBeta: 0.85,
+  bundleBeta: 0.9,
   alphaDecay: 0.1,
-  forceStrength: 0.5,
+  chargeStrength: 3,
+  linkStrength: 3,
   chargeDistanceMax: 50,
-  hoverStrokeWidth: 2.5
+  hoverStrokeWidth: 2.5,
+  arrowSize: 3
 };
 var SCALES = {
-  pathThickness: d3.scaleLinear().range([0.2, 1.2]),
+  pathThickness: d3.scaleLinear().range([0.4, 2]),
   segments: d3.scaleLinear().domain([0, 500]).range([1, 8])
 };
 var COLORS = {
-  node: "#ef4444",
+  node: "#1f2937",
   nodeStroke: "#ffffff",
   tempNode: "#6b7280",
-  path: "#3b82f6",
+  path: "#4b5563",
   country: "#9ca3af",
   countryStroke: "#f3f4f6",
   text: "#1f2937",
+  legendBackground: "rgba(255, 255, 255, 0.5)",
   labelBackground: "rgba(255, 255, 255, 0)",
   labelBackgroundHover: "rgba(255, 255, 255, 0.5)",
   labelBackgroundDrag: "rgba(255, 255, 255, 0.8)"
@@ -6655,6 +7951,25 @@ function deleteNode(nodeId) {
     console.warn(`Node with id ${nodeId} not found`);
     return null;
   }
+  const connectedPaths = flowMap.bundleData.paths.filter(
+    (path2) => path2.source.id === nodeId || path2.target.id === nodeId
+  );
+  connectedPaths.forEach((path2) => {
+    removeBundleData(path2.id);
+    const pathElement = flowMap.pathsList?.select(`#${path2.id}`);
+    if (pathElement && !pathElement.empty()) {
+      pathElement.remove();
+    }
+    const hoverElement = flowMap.pathsList?.select(
+      `path.flow-hover[data-path-id="${path2.id}"]`
+    );
+    if (hoverElement && !hoverElement.empty()) {
+      hoverElement.remove();
+    }
+  });
+  if (flowMap.bundleData.paths.length > 0) {
+    regenerateBundling();
+  }
   animateNodeOut(existingNode);
   return null;
 }
@@ -6722,6 +8037,10 @@ function deletePath(pathId) {
   const existingPath = flowMap.pathsList.select(`#${pathId}`);
   if (!existingPath.empty()) {
     animatePathOut(existingPath);
+    const hoverPath = flowMap.pathsList.selectAll("path.flow-hover").filter((d) => d.id === pathId);
+    if (!hoverPath.empty()) {
+      hoverPath.remove();
+    }
     removeBundleData(pathId);
     regenerateBundling();
   } else {
@@ -6734,6 +8053,16 @@ function removeTempNode() {
     flowMap.tempNode.remove();
     flowMap.tempNode = null;
   }
+}
+function showTempNodeAtCoords(lat, lon) {
+  if (!flowMap.projection) {
+    requestAnimationFrame(() => showTempNodeAtCoords(lat, lon));
+    return null;
+  }
+  removeTempNode();
+  const [x, y] = flowMap.projection([lon, lat]);
+  createTempNode(x, y);
+  return null;
 }
 function downloadModelData(gleamJsonData) {
   const gleamState = JSON.parse(gleamJsonData);
@@ -6819,14 +8148,22 @@ function setupFileImport(dispatch) {
         reader.readAsText(file);
       }
     });
+    const fileLabel = shadowRoot.querySelector('label[for="import-file"]');
+    if (fileLabel) {
+      fileLabel.addEventListener("keydown", (event4) => {
+        if (event4.key === "Enter" || event4.key === " ") {
+          event4.preventDefault();
+          fileInput.click();
+        }
+      });
+    }
   });
 }
-function restoreD3StateAfterImport(nodes2, paths) {
-  if (!window.pendingD3State) return;
+function restoreD3State(nodes2, paths) {
   const d3State = window.pendingD3State;
   clearFlowMap();
   nodes2.toArray().forEach((node) => {
-    const nodeState = d3State.nodes.find((n) => n.id === node.node_id);
+    const nodeState = d3State?.nodes.find((n) => n.id === node.node_id);
     addNode(node.node_id, node.lat, node.lon, node.node_label);
     if (nodeState && (nodeState.labelDx !== 0 || nodeState.labelDy !== -6)) {
       requestAnimationFrame(() => {
@@ -6852,7 +8189,73 @@ function restoreD3StateAfterImport(nodes2, paths) {
       path2.value
     );
   });
-  delete window.pendingD3State;
+  if (window.pendingD3State) {
+    delete window.pendingD3State;
+  }
+}
+function exportMapAsPNG() {
+  if (!flowMap.svg || !flowMap.initialised) {
+    console.warn("Map not ready for export");
+    return null;
+  }
+  const svgNode = flowMap.svg.node();
+  const clonedSvg = svgNode.cloneNode(true);
+  const currentTransform = flowMap.g.attr("transform");
+  const clonedGroup = clonedSvg.querySelector("g");
+  if (clonedGroup && currentTransform) {
+    clonedGroup.setAttribute("transform", currentTransform);
+  }
+  const bbox = flowMap.g.node().getBBox();
+  const padding = 40;
+  const width = bbox.width + padding * 2;
+  const height = bbox.height + padding * 2;
+  clonedSvg.setAttribute(
+    "viewBox",
+    `${bbox.x - padding} ${bbox.y - padding} ${width} ${height}`
+  );
+  clonedSvg.setAttribute("width", width);
+  clonedSvg.setAttribute("height", height);
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", bbox.x - padding);
+  rect.setAttribute("y", bbox.y - padding);
+  rect.setAttribute("width", width);
+  rect.setAttribute("height", height);
+  rect.setAttribute("fill", "white");
+  clonedGroup.insertBefore(rect, clonedGroup.firstChild);
+  clonedSvg.style.cursor = "default";
+  if (!clonedSvg.getAttribute("xmlns")) {
+    clonedSvg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  }
+  const serializer = new XMLSerializer();
+  const svgString = serializer.serializeToString(clonedSvg);
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const scale = 15;
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const img = new Image();
+  const svgBlob = new Blob([svgString], {
+    type: "image/svg+xml;charset=utf-8"
+  });
+  const url = URL.createObjectURL(svgBlob);
+  img.onload = function() {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(function(blob) {
+      const pngUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = pngUrl;
+      link.download = `flow-map-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(pngUrl);
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  };
+  img.src = url;
+  return null;
 }
 function createNodeGroup(nodeId, x, y) {
   ensureNodesGroup();
@@ -6993,10 +8396,10 @@ function clearExistingPaths() {
   flowMap.pathsList.selectAll("path.flow-hover").remove();
 }
 function createHoverAreas(line) {
-  return flowMap.pathsList.selectAll("path.flow-hover").data(flowMap.bundleData.paths).enter().append("path").attr("d", (d) => line(d.segments)).attr("class", "flow-hover").attr("fill", "none").attr("stroke", "transparent").attr("stroke-width", CONFIG.hoverStrokeWidth).style("cursor", "pointer").on("mouseover", handlePathHover).on("mouseout", handlePathUnhover).on("click", handlePathClick);
+  return flowMap.pathsList.selectAll("path.flow-hover").data(flowMap.bundleData.paths).enter().append("path").attr("d", (d) => line(d.segments)).attr("class", "flow-hover").attr("fill", "none").attr("data-path-id", (d) => d.id).attr("stroke", "transparent").attr("stroke-width", CONFIG.hoverStrokeWidth).style("cursor", "pointer").on("mouseover", handlePathHover).on("mouseout", handlePathUnhover).on("click", handlePathClick);
 }
 function createVisiblePaths(line) {
-  return flowMap.pathsList.selectAll("path.flow").data(flowMap.bundleData.paths).enter().append("path").attr("d", (d) => line(d.segments)).attr("class", "flow").attr("id", (d) => d.id).attr("fill", "none").attr("stroke", COLORS.path).attr("stroke-width", (d) => SCALES.pathThickness(d.value)).style("pointer-events", "none");
+  return flowMap.pathsList.selectAll("path.flow").data(flowMap.bundleData.paths).enter().append("path").attr("d", (d) => line(d.segments)).attr("class", "flow").attr("id", (d) => d.id).attr("fill", "none").attr("stroke", COLORS.path).attr("stroke-width", (d) => SCALES.pathThickness(d.value)).attr("marker-mid", "url(#arrowhead)").style("pointer-events", "none");
 }
 function handlePathHover(event4, d) {
   flowMap.pathsList.select(`path.flow#${d.id}`).transition().duration(CONFIG.hoverDuration).attr("stroke-width", SCALES.pathThickness(d.value) + 1);
@@ -7089,8 +8492,8 @@ function removePathLinks(pathToRemove) {
   );
 }
 function generateSegments(pathData) {
-  const length3 = calculateDistance(pathData.source, pathData.target);
-  const segmentCount = Math.round(SCALES.segments(length3));
+  const length4 = calculateDistance(pathData.source, pathData.target);
+  const segmentCount = Math.round(SCALES.segments(length4));
   const xScale = d3.scaleLinear().domain([0, segmentCount + 1]).range([pathData.source.x, pathData.target.x]);
   const yScale = d3.scaleLinear().domain([0, segmentCount + 1]).range([pathData.source.y, pathData.target.y]);
   let source = pathData.source;
@@ -7160,6 +8563,9 @@ function regenerateBundling() {
   const { hoverAreas, visiblePaths, line } = createPathElements();
   setupForceLayout(visiblePaths, hoverAreas, line);
   animatePathsIn(visiblePaths);
+  requestAnimationFrame(() => {
+    createLegend();
+  });
 }
 function updatePathScales() {
   const totalSum = flowMap.bundleData.paths.reduce(
@@ -7169,13 +8575,18 @@ function updatePathScales() {
   SCALES.pathThickness.domain([0, totalSum]);
 }
 function setupForceLayout(visiblePaths, hoverAreas, line) {
+  visiblePaths.style("opacity", 0);
+  hoverAreas.style("opacity", 0);
   stopForceLayout();
   flowMap.forceLayout = d3.forceSimulation().alphaDecay(CONFIG.alphaDecay).randomSource(d3.randomLcg(42)).force(
     "charge",
-    d3.forceManyBody().strength(CONFIG.forceStrength).distanceMax(CONFIG.chargeDistanceMax)
-  ).force("link", d3.forceLink().strength(CONFIG.forceStrength).distance(1)).on("tick", function() {
+    d3.forceManyBody().strength(CONFIG.chargeStrength).distanceMax(CONFIG.chargeDistanceMax)
+  ).force("link", d3.forceLink().strength(CONFIG.linkStrength).distance(1)).on("tick", function() {
     visiblePaths.attr("d", (d) => line(d.segments));
     hoverAreas.attr("d", (d) => line(d.segments));
+  }).on("end", function() {
+    visiblePaths.transition().duration(CONFIG.pathAnimationDuration).style("opacity", 1);
+    hoverAreas.transition().duration(CONFIG.pathAnimationDuration).style("opacity", 1);
   });
   flowMap.forceLayout.nodes(flowMap.bundleData.nodes).force("link").links(flowMap.bundleData.links);
 }
@@ -7240,9 +8651,34 @@ function clearFlowMap() {
   if (flowMap.g) {
     flowMap.g.selectAll(".node").remove();
     flowMap.g.selectAll(".flow").remove();
+    flowMap.svg.selectAll(".legend").remove();
     flowMap.bundleData = { nodes: [], links: [], paths: [] };
     stopForceLayout();
   }
+}
+function createLegend() {
+  flowMap.svg.selectAll(".legend").remove();
+  if (flowMap.bundleData.paths.length === 0) return;
+  const legendGroup = flowMap.svg.append("g").attr("class", "legend");
+  const maxValue = SCALES.pathThickness.domain()[1];
+  const minValue = SCALES.pathThickness.domain()[0];
+  const legendValues = [
+    minValue,
+    maxValue * 0.25,
+    maxValue * 0.5,
+    maxValue * 0.75,
+    maxValue
+  ].filter((v) => v > 0);
+  const legendX = 15;
+  const legendY = flowMap.svg.attr("height") - 70;
+  const legendHeight = legendValues.length * 12 + 20;
+  legendGroup.append("rect").attr("x", legendX - 5).attr("y", legendY - 15).attr("width", 100).attr("height", legendHeight).attr("fill", COLORS.legendBackground).attr("stroke", COLORS.node).attr("stroke-width", 0.5).attr("rx", 2);
+  legendGroup.append("text").attr("x", legendX).attr("y", legendY - 5).style("font-size", "5px").style("font-family", STYLES.fontFamily).style("font-weight", "bold").style("fill", COLORS.text).text("Flow Value");
+  legendValues.forEach((value2, i) => {
+    const y = legendY + 5 + i * 12;
+    legendGroup.append("line").attr("x1", legendX).attr("y1", y).attr("x2", legendX + 20).attr("y2", y).attr("stroke", COLORS.path).attr("stroke-width", SCALES.pathThickness(value2));
+    legendGroup.append("text").attr("x", legendX + 25).attr("y", y + 1.5).style("font-size", "4px").style("font-family", STYLES.fontFamily).style("fill", COLORS.text).text(Math.round(value2).toLocaleString());
+  });
 }
 function createMap() {
   const shadowRoot = document.querySelector("flow-map").shadowRoot;
@@ -7263,6 +8699,7 @@ function createMap() {
 function setupSVG(shadowRoot, width, height) {
   flowMap.svg = d3.select(shadowRoot.getElementById("flow-map")).append("svg").attr("width", "100%").style("width", width).attr("height", height).style("cursor", "crosshair");
   flowMap.g = flowMap.svg.append("g");
+  flowMap.svg.append("defs").append("marker").attr("id", "arrowhead").attr("viewBox", "0 -5 10 10").attr("refX", 5).attr("refY", 0).attr("markerWidth", CONFIG.arrowSize).attr("markerHeight", CONFIG.arrowSize).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", COLORS.path);
 }
 function setupZoomBehavior() {
   const zoom = d3.zoom().scaleExtent([0.1, 200]).on("zoom", (event4) => {
@@ -7375,6 +8812,18 @@ var PathFormSubmit = class extends CustomType {
     this[0] = $0;
   }
 };
+var LocationSearch = class extends CustomType {
+  constructor(query) {
+    super();
+    this.query = query;
+  }
+};
+var LocationSearchResult = class extends CustomType {
+  constructor(result) {
+    super();
+    this.result = result;
+  }
+};
 var DeleteNode = class extends CustomType {
   constructor(node_id) {
     super();
@@ -7399,6 +8848,12 @@ var ImportModel = class extends CustomType {
     this.json_data = json_data;
   }
 };
+var ExportMap = class extends CustomType {
+};
+var ClearMap = class extends CustomType {
+};
+var GenerateRandomMap = class extends CustomType {
+};
 var Node = class extends CustomType {
   constructor(node_id, lat, lon, node_label) {
     super();
@@ -7415,6 +8870,14 @@ var Path = class extends CustomType {
     this.origin_node_id = origin_node_id;
     this.destination_node_id = destination_node_id;
     this.value = value2;
+  }
+};
+var LocationResult = class extends CustomType {
+  constructor(lat, lon, name2) {
+    super();
+    this.lat = lat;
+    this.lon = lon;
+    this.name = name2;
   }
 };
 var NewNodeForm = class extends CustomType {
@@ -7490,6 +8953,18 @@ var RemovePath = class extends CustomType {
   constructor(path2) {
     super();
     this.path = path2;
+  }
+};
+var GenerateMap = class extends CustomType {
+  constructor(previous_model) {
+    super();
+    this.previous_model = previous_model;
+  }
+};
+var ResetMap = class extends CustomType {
+  constructor(previous_model) {
+    super();
+    this.previous_model = previous_model;
   }
 };
 function element4() {
@@ -7675,9 +9150,75 @@ function path_decoder() {
     }
   );
 }
+function decode_location_result() {
+  return field(
+    "features",
+    list2(
+      subfield(
+        toList(["properties", "name"]),
+        string2,
+        (name2) => {
+          return subfield(
+            toList(["geometry", "coordinates"]),
+            (() => {
+              let _pipe = list2(float2);
+              return map2(
+                _pipe,
+                (coords) => {
+                  if (coords instanceof Empty) {
+                    return new LocationResult(0, 0, name2);
+                  } else {
+                    let $ = coords.tail;
+                    if ($ instanceof Empty) {
+                      return new LocationResult(0, 0, name2);
+                    } else {
+                      let $1 = $.tail;
+                      if ($1 instanceof Empty) {
+                        let lon = coords.head;
+                        let lat = $.head;
+                        return new LocationResult(lat, lon, name2);
+                      } else {
+                        return new LocationResult(0, 0, name2);
+                      }
+                    }
+                  }
+                }
+              );
+            })(),
+            (coords) => {
+              return success(coords);
+            }
+          );
+        }
+      )
+    ),
+    (features) => {
+      let $ = first(features);
+      if ($ instanceof Ok) {
+        let coords = $[0];
+        return success(coords);
+      } else {
+        return failure(new LocationResult(0, 0, ""), "Coordinates");
+      }
+    }
+  );
+}
 function empty_form() {
   let _pipe = success2(new EmptyForm());
   return new$8(_pipe);
+}
+function empty_model() {
+  return new Model(
+    empty_form(),
+    new NoForm(),
+    toList([]),
+    1,
+    1,
+    toList([]),
+    toList([]),
+    new None(),
+    new None()
+  );
 }
 function model_decoder() {
   return field(
@@ -7816,6 +9357,61 @@ function edit_path_form(path2) {
     ])
   );
 }
+function render_search_location() {
+  return div(
+    toList([class$("mt-2")]),
+    toList([
+      label(
+        toList([for$("location-search")]),
+        toList([text2("Search for location: ")])
+      ),
+      div(
+        toList([class$("flex mt-2 gap-2")]),
+        toList([
+          input(
+            toList([
+              class$(
+                "flex-1 min-w-0 bg-gray-200 text-gray-700 rounded-sm px-2 py-1"
+              ),
+              id("location-search"),
+              type_("text"),
+              name("location-search")
+            ])
+          ),
+          button(
+            toList([
+              class$(
+                "flex bg-gray-600 hover:bg-gray-400 px-1 py-1 rounded-sm cursor-pointer"
+              )
+            ]),
+            toList([
+              svg(
+                toList([
+                  attribute2("stroke-width", "1.5"),
+                  attribute2("stroke", "currentColor"),
+                  attribute2("fill", "none"),
+                  class$("size-6")
+                ]),
+                toList([
+                  path(
+                    toList([
+                      attribute2("stroke-linecap", "round"),
+                      attribute2("stroke-linejoin", "round"),
+                      attribute2(
+                        "d",
+                        "m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
+                      )
+                    ])
+                  )
+                ])
+              )
+            ])
+          )
+        ])
+      )
+    ])
+  );
+}
 function render_input_field(form3, name2, label2) {
   let errors = field_error_messages(form3, name2);
   return div(
@@ -7861,11 +9457,30 @@ function render_undo(model) {
     return button(
       toList([
         class$(
-          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2"
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer"
         ),
-        on_click(new Undo())
+        on_click(new Undo()),
+        title("Undo")
       ]),
-      toList([text2("Undo")])
+      toList([
+        svg(
+          toList([
+            attribute2("stroke-width", "1.5"),
+            attribute2("stroke", "currentColor"),
+            attribute2("fill", "none"),
+            class$("size-6")
+          ]),
+          toList([
+            path(
+              toList([
+                attribute2("stroke-linecap", "round"),
+                attribute2("stroke-linejoin", "round"),
+                attribute2("d", "M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3")
+              ])
+            )
+          ])
+        )
+      ])
     );
   }
 }
@@ -7973,6 +9588,22 @@ function render_node_form(form3, current_form) {
   return div(
     toList([class$("flex-1 py-2")]),
     toList([
+      div(
+        toList([class$("text-sm")]),
+        toList([
+          text2(
+            "Select a location on the map, search for a location, or manually enter coordinates."
+          )
+        ])
+      ),
+      form2(
+        toList([
+          on_submit((var0) => {
+            return new LocationSearch(var0);
+          })
+        ]),
+        toList([render_search_location()])
+      ),
       form2(
         toList([on_submit(handle_submit)]),
         toList([
@@ -8057,28 +9688,71 @@ function render_delete_button(current_form) {
     );
   }
 }
-function render_import_export_buttons() {
+function render_import_export_buttons(model) {
   return div(
-    toList([class$("flex-1 mb-2")]),
+    toList([class$("flex gap-2 mb-2")]),
     toList([
       button(
         toList([
           class$(
             "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer"
           ),
+          title("Download File"),
           on_click(new DownloadModel())
         ]),
-        toList([text2("Download")])
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                  )
+                ])
+              )
+            ])
+          )
+        ])
       ),
       label(
         toList([
           class$(
-            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block"
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer inline-block"
           ),
-          for$("import-file")
+          title("Load File"),
+          for$("import-file"),
+          attribute2("tabindex", "0")
         ]),
         toList([
-          text2("Import"),
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+                  )
+                ])
+              )
+            ])
+          ),
           input(
             toList([
               id("import-file"),
@@ -8088,7 +9762,39 @@ function render_import_export_buttons() {
             ])
           )
         ])
-      )
+      ),
+      button(
+        toList([
+          class$(
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer"
+          ),
+          title("Export as PNG"),
+          on_click(new ExportMap())
+        ]),
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+                  )
+                ])
+              )
+            ])
+          )
+        ])
+      ),
+      render_undo(model)
     ])
   );
 }
@@ -8100,26 +9806,136 @@ function render_controls(model) {
       )
     ]),
     toList([
-      render_import_export_buttons(),
+      div(
+        toList([class$("text-sm mb-2")]),
+        toList([
+          text2(
+            "Hover over buttons for their descriptions. Selecting nodes and paths on the map allows you to edit or delete them. Zoom and pan on the map to modify the view extent."
+          )
+        ])
+      ),
+      render_import_export_buttons(model),
       button(
         toList([
           class$(
             "bg-blue-600 hover:bg-blue-400 px-3 py-2 rounded-sm cursor-pointer"
           ),
+          title("Add Node"),
           on_click(new StartNodeForm(""))
         ]),
-        toList([text2("Add Node")])
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z M18 12a6 6 0 1 1-12 0 6 6 0 0 1 12 0Z"
+                  )
+                ])
+              )
+            ])
+          )
+        ])
       ),
       button(
         toList([
           class$(
             "bg-green-600 hover:bg-green-400 px-3 py-2 rounded-sm cursor-pointer ml-2"
           ),
+          title("Add Path"),
           on_click(new StartPathForm(""))
         ]),
-        toList([text2("Add Path")])
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M4 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M20 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M5 10Q12 3 19 10"
+                  )
+                ])
+              )
+            ])
+          )
+        ])
       ),
-      render_undo(model),
+      button(
+        toList([
+          class$(
+            "bg-purple-600 hover:bg-purple-400 px-3 py-2 rounded-sm cursor-pointer ml-2"
+          ),
+          title("Generate Random Map"),
+          on_click(new GenerateRandomMap())
+        ]),
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"
+                  )
+                ])
+              )
+            ])
+          )
+        ])
+      ),
+      button(
+        toList([
+          class$(
+            "bg-red-600 hover:bg-red-400 px-3 py-2 rounded-sm cursor-pointer ml-2"
+          ),
+          title("Reset Map"),
+          on_click(new ClearMap())
+        ]),
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2("d", "M6 18 18 6M6 6l12 12")
+                ])
+              )
+            ])
+          )
+        ])
+      ),
       div(
         toList([
           class$("transition-all duration-300 ease-in-out"),
@@ -8128,7 +9944,7 @@ function render_controls(model) {
             if ($ instanceof NoForm) {
               return class$("max-h-0 opacity-0");
             } else {
-              return class$("max-h-96 opacity-100");
+              return class$("max-h-256 opacity-100");
             }
           })()
         ]),
@@ -8145,6 +9961,10 @@ function view(model) {
       div(
         toList([class$("flex-col w-2/3 p-4")]),
         toList([
+          h1(
+            toList([class$("text-4xl font-extrabold mb-6")]),
+            toList([text2("Flow map")])
+          ),
           div(
             toList([
               class$(
@@ -8243,6 +10063,92 @@ function serialise_model(model) {
 function deserialise_model(json_data) {
   return parse(json_data, model_decoder());
 }
+function generate_random_map() {
+  let num_nodes = 5 + random(6);
+  let cities = take(
+    toList([
+      ["London", 51.5074, -0.1278],
+      ["Lagos", 6.455, 3.3945],
+      ["New York", 40.7128, -74.006],
+      ["S\xE3o Paulo", -23.5505, -46.6333],
+      ["Tokyo", 35.6762, 139.6503],
+      ["Sydney", -33.8688, 151.2093],
+      ["Tunis", 36.8002, 10.1857757],
+      ["Singapore", 1.3521, 103.8198],
+      ["Mumbai", 19.076, 72.8777],
+      ["Cape Town", -33.9249, 18.4241],
+      ["Paris", 48.8566, 2.3522]
+    ]),
+    num_nodes
+  );
+  let $ = map_fold(
+    cities,
+    1,
+    (i, city) => {
+      return [
+        i + 1,
+        new Node("node-id-" + to_string(i), city[1], city[2], city[0])
+      ];
+    }
+  );
+  let next_node_id;
+  let nodes2;
+  next_node_id = $[0];
+  nodes2 = $[1];
+  let $1 = map_fold(
+    range(1, num_nodes),
+    1,
+    (i, node_idx_1) => {
+      return map_fold(
+        range(1, num_nodes),
+        i,
+        (j, node_idx_2) => {
+          let $2 = node_idx_1 === node_idx_2;
+          if ($2) {
+            return [j, new Path("", "", "", 0)];
+          } else {
+            let flow_value = random(3e3);
+            let $3 = flow_value > 1e3;
+            if ($3) {
+              return [j, new Path("", "", "", 0)];
+            } else {
+              return [
+                j + 1,
+                new Path(
+                  "path-id-" + to_string(j),
+                  "node-id-" + to_string(node_idx_1),
+                  "node-id-" + to_string(node_idx_2),
+                  identity(flow_value)
+                )
+              ];
+            }
+          }
+        }
+      );
+    }
+  );
+  let next_path_id;
+  let paths;
+  next_path_id = $1[0];
+  paths = $1[1];
+  let _record = empty_model();
+  return new Model(
+    _record.form,
+    _record.current_form,
+    _record.actions,
+    next_node_id,
+    next_path_id,
+    nodes2,
+    (() => {
+      let _pipe = flatten(paths);
+      return filter(_pipe, (path2) => {
+        return path2.path_id !== "";
+      });
+    })(),
+    _record.selected_coords,
+    _record.selected_node
+  );
+}
 function init(_) {
   let init_effect = from(
     (dispatch) => {
@@ -8292,20 +10198,7 @@ function init(_) {
       );
     }
   );
-  return [
-    new Model(
-      empty_form(),
-      new NoForm(),
-      toList([]),
-      1,
-      1,
-      toList([]),
-      toList([]),
-      new None(),
-      new None()
-    ),
-    init_effect
-  ];
+  return [empty_model(), init_effect];
 }
 function update2(model, message) {
   if (message instanceof SelectCoords) {
@@ -8538,7 +10431,7 @@ function update2(model, message) {
       let _block;
       let _pipe = model;
       let _pipe$1 = get_node_by_id(_pipe, node_id);
-      _block = unwrap(_pipe$1, new Node("default", 0, 0, ""));
+      _block = unwrap2(_pipe$1, new Node("default", 0, 0, ""));
       let node = _block;
       let $1 = node.node_id;
       if ($1 === "default") {
@@ -8666,7 +10559,7 @@ function update2(model, message) {
       let _block;
       let _pipe = model;
       let _pipe$1 = get_path_by_id(_pipe, path_id);
-      _block = unwrap(_pipe$1, new Path("default", "", "", 0));
+      _block = unwrap2(_pipe$1, new Path("default", "", "", 0));
       let path2 = _block;
       let $1 = path2.path_id;
       if ($1 === "default") {
@@ -8746,6 +10639,68 @@ function update2(model, message) {
         model.selected_node
       );
       return [updated_model, none()];
+    }
+  } else if (message instanceof LocationSearch) {
+    let $ = message.query;
+    if ($ instanceof Empty) {
+      return [model, none()];
+    } else {
+      let $1 = $.tail;
+      if ($1 instanceof Empty) {
+        let $2 = $.head[0];
+        if ($2 === "location-search") {
+          let query = $.head[1];
+          return [
+            model,
+            get2(
+              "https://photon.komoot.io/api/?q=" + query + "&limit=1",
+              expect_json(
+                decode_location_result(),
+                (var0) => {
+                  return new LocationSearchResult(var0);
+                }
+              )
+            )
+          ];
+        } else {
+          return [model, none()];
+        }
+      } else {
+        return [model, none()];
+      }
+    }
+  } else if (message instanceof LocationSearchResult) {
+    let $ = message.result;
+    if ($ instanceof Ok) {
+      let result = $[0];
+      let _block;
+      let _pipe = model.form;
+      _block = set_values(
+        _pipe,
+        toList([
+          ["lat", float_to_string(result.lat)],
+          ["lon", float_to_string(result.lon)],
+          ["node_label", result.name]
+        ])
+      );
+      let updated_form = _block;
+      showTempNodeAtCoords(result.lat, result.lon);
+      return [
+        new Model(
+          updated_form,
+          model.current_form,
+          model.actions,
+          model.next_node_id,
+          model.next_path_id,
+          model.nodes,
+          model.paths,
+          new Some([result.lat, result.lon]),
+          model.selected_node
+        ),
+        none()
+      ];
+    } else {
+      return [model, none()];
     }
   } else if (message instanceof DeleteNode) {
     let node_id = message.node_id;
@@ -8971,7 +10926,7 @@ function update2(model, message) {
           original.value
         );
         return [updated_model, none()];
-      } else {
+      } else if ($1 instanceof RemovePath) {
         let rest_actions = $.tail;
         let path2 = $1.path;
         let _block;
@@ -8995,6 +10950,22 @@ function update2(model, message) {
           path2.value
         );
         return [updated_model, none()];
+      } else if ($1 instanceof GenerateMap) {
+        let previous_model = $1.previous_model;
+        let recreation_effect = from(
+          (_) => {
+            return restoreD3State(previous_model.nodes, previous_model.paths);
+          }
+        );
+        return [previous_model, recreation_effect];
+      } else {
+        let previous_model = $1.previous_model;
+        let recreation_effect = from(
+          (_) => {
+            return restoreD3State(previous_model.nodes, previous_model.paths);
+          }
+        );
+        return [previous_model, recreation_effect];
       }
     }
   } else if (message instanceof ResetForm) {
@@ -9018,23 +10989,65 @@ function update2(model, message) {
     let model_data = serialise_model(model);
     downloadModelData(model_data);
     return [model, none()];
-  } else {
+  } else if (message instanceof ImportModel) {
     let json_data = message.json_data;
     let $ = deserialise_model(json_data);
     if ($ instanceof Ok) {
       let imported_model = $[0];
       let recreation_effect = from(
         (_) => {
-          return restoreD3StateAfterImport(
-            imported_model.nodes,
-            imported_model.paths
-          );
+          return restoreD3State(imported_model.nodes, imported_model.paths);
         }
       );
       return [imported_model, recreation_effect];
     } else {
       return [model, none()];
     }
+  } else if (message instanceof ExportMap) {
+    exportMapAsPNG();
+    return [model, none()];
+  } else if (message instanceof ClearMap) {
+    let _block;
+    let _record = empty_model();
+    _block = new Model(
+      _record.form,
+      _record.current_form,
+      prepend(new ResetMap(model), model.actions),
+      _record.next_node_id,
+      _record.next_path_id,
+      _record.nodes,
+      _record.paths,
+      _record.selected_coords,
+      _record.selected_node
+    );
+    let updated_model = _block;
+    let recreation_effect = from(
+      (_) => {
+        return restoreD3State(toList([]), toList([]));
+      }
+    );
+    return [updated_model, recreation_effect];
+  } else {
+    let random_model = generate_random_map();
+    let recreation_effect = from(
+      (_) => {
+        return restoreD3State(random_model.nodes, random_model.paths);
+      }
+    );
+    return [
+      new Model(
+        random_model.form,
+        random_model.current_form,
+        prepend(new GenerateMap(model), model.actions),
+        random_model.next_node_id,
+        random_model.next_path_id,
+        random_model.nodes,
+        random_model.paths,
+        random_model.selected_coords,
+        random_model.selected_node
+      ),
+      recreation_effect
+    ];
   }
 }
 function register() {
@@ -9192,8 +11205,8 @@ function createFlow(flow) {
   const flowGroup = resourcePooling.g.select(".flows-group").append("g").attr("class", "flow").attr("id", flowId);
   const entity1Bounds = getEntityBounds(entity1);
   const entity2Bounds = getEntityBounds(entity2);
-  flowTypes.forEach((flowType, index4) => {
-    createSingleFlow(flowGroup, entity1Bounds, entity2Bounds, flowType, index4);
+  flowTypes.forEach((flowType, index5) => {
+    createSingleFlow(flowGroup, entity1Bounds, entity2Bounds, flowType, index5);
   });
   setupFlowInteraction(flowGroup, flowId);
   addFlowToSimulation(flowId, entityId1, entityId2, flow);
@@ -9274,7 +11287,7 @@ function setupFileImport2(dispatch) {
     });
   });
 }
-function restoreD3StateAfterImport2(entities, materials, flows) {
+function restoreD3StateAfterImport(entities, materials, flows) {
   if (!window.pendingD3State) return;
   const d3State = window.pendingD3State;
   clearResourcePooling();
@@ -9566,7 +11579,7 @@ function getEntityBounds(entityElement) {
     bottom: y + height
   };
 }
-function createSingleFlow(flowGroup, entity1Bounds, entity2Bounds, flowType, index4) {
+function createSingleFlow(flowGroup, entity1Bounds, entity2Bounds, flowType, index5) {
   const entity1Center = { x: entity1Bounds.centerX, y: entity1Bounds.centerY };
   const entity2Center = { x: entity2Bounds.centerX, y: entity2Bounds.centerY };
   const startPoint = getEntityBorderPoint(
@@ -9574,22 +11587,22 @@ function createSingleFlow(flowGroup, entity1Bounds, entity2Bounds, flowType, ind
     entity2Center.x,
     entity2Center.y,
     flowType,
-    index4
+    index5
   );
   const endPoint = getEntityBorderPoint(
     entity2Bounds,
     entity1Center.x,
     entity1Center.y,
     flowType,
-    index4
+    index5
   );
   const pathData = createCurvedPath(startPoint, endPoint);
   const color = FLOW_COLORS[flowType.flow_category] || "#666";
   const hoverPath = flowGroup.append("path").attr("class", "flow-hover").attr("d", pathData).style("fill", "none").style("stroke", "transparent").style("stroke-width", CONFIG2.flowHoverWidth).style("cursor", "pointer");
   const flowPath = flowGroup.append("path").attr("class", "flow-path").attr("d", pathData).style("fill", "none").style("stroke", color).style("stroke-width", 1).style("stroke-dasharray", flowType.is_future ? "5,5" : "none").style("pointer-events", "none");
   setupFlowArrows(flowPath, flowType);
-  flowPath.datum({ flowType, index: index4 });
-  hoverPath.datum({ flowType, index: index4 });
+  flowPath.datum({ flowType, index: index5 });
+  hoverPath.datum({ flowType, index: index5 });
   return { hoverPath, flowPath };
 }
 function setupFlowInteraction(flowGroup, flowId) {
@@ -9627,7 +11640,7 @@ function createArrowMarker(defs, id2, color, isReverse) {
   const path2 = isReverse ? "M10,-5L0,0L10,5" : "M0,-5L10,0L0,5";
   marker.append("path").attr("d", path2).attr("fill", color);
 }
-function getEntityBorderPoint(entityBounds, targetX, targetY, flowType = null, index4 = 0) {
+function getEntityBorderPoint(entityBounds, targetX, targetY, flowType = null, index5 = 0) {
   const centerX = entityBounds.x + entityBounds.width / 2;
   const centerY = entityBounds.y + entityBounds.height / 2;
   const dx = targetX - centerX;
@@ -10307,10 +12320,10 @@ function flow_decoder() {
                 } else {
                   let $1 = $.tail;
                   if ($1 instanceof Empty) {
-                    let first = entity_ids_list.head;
+                    let first2 = entity_ids_list.head;
                     let second = $.head;
                     return success(
-                      new Flow(flow_id, [first, second], flow_types)
+                      new Flow(flow_id, [first2, second], flow_types)
                     );
                   } else {
                     return failure(
@@ -11486,6 +13499,10 @@ function view2(model) {
       div(
         toList([class$("flex-col w-2/3 p-4")]),
         toList([
+          h1(
+            toList([class$("text-4xl font-extrabold mb-6")]),
+            toList([text2("Resource Pooling")])
+          ),
           div(
             toList([
               class$(
@@ -11657,7 +13674,7 @@ function init2(_) {
   );
   return [
     new Model2(
-      toList([new Material("Energy", "material-id-0")]),
+      toList([]),
       toList([]),
       toList([]),
       empty_form2(),
@@ -11696,7 +13713,7 @@ function update3(model, message) {
       let _block;
       let _pipe = model;
       let _pipe$1 = get_entity_by_id(_pipe, entity_id);
-      _block = unwrap(
+      _block = unwrap2(
         _pipe$1,
         new Entity("default", "", toList([]), toList([]), "")
       );
@@ -11761,7 +13778,7 @@ function update3(model, message) {
       let _block;
       let _pipe = model;
       let _pipe$1 = get_flow_by_id(_pipe, flow_id);
-      _block = unwrap(
+      _block = unwrap2(
         _pipe$1,
         new Flow("default", ["", ""], toList([]))
       );
@@ -12417,7 +14434,7 @@ function update3(model, message) {
       let imported_model = $[0];
       let recreation_effect = from(
         (_) => {
-          return restoreD3StateAfterImport2(
+          return restoreD3StateAfterImport(
             imported_model.entities,
             imported_model.materials,
             imported_model.flows
@@ -12451,7 +14468,7 @@ var ResourcePooling = class extends CustomType {
 var ToggleMenu = class extends CustomType {
 };
 function init3(_) {
-  return new Model3("Resource Pooling", true);
+  return new Model3("Flow Map", true);
 }
 function update4(model, message) {
   if (message instanceof FlowMap) {
@@ -12570,12 +14587,8 @@ function view3(model) {
         ])
       ),
       div(
-        toList([class$("flex flex-col p-12 flex-1 min-w-0")]),
+        toList([class$("flex flex-col px-12 flex-1 min-w-0")]),
         toList([
-          h1(
-            toList([class$("text-4xl font-extrabold")]),
-            toList([text2(model.page)])
-          ),
           div(
             toList([class$("flex-1 w-full py-4")]),
             toList([

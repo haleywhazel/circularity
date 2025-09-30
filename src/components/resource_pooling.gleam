@@ -68,7 +68,7 @@ fn init(_) -> #(Model, Effect(Message)) {
     })
   #(
     Model(
-      materials: [Material("Energy", "material-id-0")],
+      materials: [],
       entities: [],
       flows: [],
       form: empty_form(),
@@ -622,6 +622,9 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
 fn view(model: Model) -> Element(Message) {
   html.div([class("flex flex-1")], [
     html.div([class("flex-col w-2/3 p-4")], [
+      html.h1([class("text-4xl font-extrabold mb-6")], [
+        text("Resource Pooling"),
+      ]),
       html.div(
         [
           class("flex-1 border-2 border-solid border-gray-900 rounded-lg p-1"),
