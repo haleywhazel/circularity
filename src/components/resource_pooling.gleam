@@ -1,4 +1,5 @@
 import formal/form.{type Form}
+import gleam/dynamic
 import gleam/int
 import gleam/list
 import keyboard_shortcuts.{
@@ -12,6 +13,7 @@ import lustre/element/html
 import lustre/element/svg
 import lustre/event
 
+import gleam/dict.{type Dict}
 import gleam/dynamic/decode
 import gleam/io
 import gleam/json
@@ -46,6 +48,7 @@ type Model {
     next_flow_id: Int,
     selected_material_ids: List(String),
     value_activities: List(String),
+    actions: List(Action),
   )
 }
 
@@ -65,6 +68,12 @@ fn init(_) -> #(Model, Effect(Message)) {
 
       js_dispatch(dispatch_wrapper)
       setup_file_import(dispatch_wrapper)
+
+      dispatch
+      |> install_keyboard_shortcuts(KeyDown, [
+        Shortcut([Key("Escape")], ResetForm, [PreventDefault]),
+        Shortcut([Modifier, Key("z")], Undo, [PreventDefault]),
+      ])
     })
   #(
     Model(
@@ -78,6 +87,7 @@ fn init(_) -> #(Model, Effect(Message)) {
       next_flow_id: 1,
       selected_material_ids: [],
       value_activities: [],
+      actions: [],
     ),
     init_effect,
   )
@@ -102,6 +112,7 @@ fn model_decoder() {
       next_flow_id: next_flow_id,
       selected_material_ids: [],
       value_activities: [],
+      actions: [],
     ),
   )
 }
@@ -127,6 +138,10 @@ type Message {
   DeleteFlow(flow_id: String)
   DownloadModel
   ImportModel(json_data: String)
+  Undo
+  ResetForm
+  ExportMap
+  ClearMap
 }
 
 fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
@@ -281,6 +296,7 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
               next_entity_id: model.next_entity_id + 1,
               selected_material_ids: [],
               value_activities: [],
+              actions: [NewEntity(new_entity), ..model.actions],
             ),
             effect.none(),
           )
@@ -345,6 +361,8 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
     DeleteEntity(entity_id) -> {
       case get_entity_by_id(model, entity_id) {
         Ok(entity) -> {
+          let position = get_entity_position(entity_id)
+
           let updated_entities =
             list.filter(model.entities, fn(entity) {
               entity.entity_id != entity_id
@@ -361,7 +379,15 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
             })
 
           let updated_model =
-            Model(..model, entities: updated_entities, flows: updated_flows)
+            Model(
+              ..model,
+              entities: updated_entities,
+              flows: updated_flows,
+              actions: [
+                RemoveEntity(entity, connected_flows, position),
+                ..model.actions
+              ],
+            )
             |> reset_form()
 
           delete_entity(entity.entity_id)
@@ -538,6 +564,7 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
               next_flow_id: model.next_flow_id + 1,
               selected_material_ids: [],
               value_activities: [],
+              actions: [NewFlow(new_flow), ..model.actions],
             ),
             effect.none(),
           )
@@ -581,7 +608,10 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
             list.filter(model.flows, fn(f) { flow.flow_id != f.flow_id })
 
           let updated_model =
-            Model(..model, flows: updated_flows)
+            Model(..model, flows: updated_flows, actions: [
+              RemoveFlow(flow),
+              ..model.actions
+            ])
             |> reset_form()
 
           delete_flow(flow.flow_id)
@@ -603,7 +633,7 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
         Ok(imported_model) -> {
           let recreation_effect =
             effect.from(fn(_dispatch) {
-              restore_d3_state_after_import(
+              restore_d3_state(
                 imported_model.entities,
                 imported_model.materials,
                 imported_model.flows,
@@ -613,6 +643,147 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
         }
         Error(_) -> #(model, effect.none())
       }
+    }
+    Undo -> {
+      case model.actions {
+        [NewEntity(entity), ..rest_actions] -> {
+          let updated_entities =
+            list.filter(model.entities, fn(e) {
+              e.entity_id != entity.entity_id
+            })
+          let updated_model =
+            Model(..model, entities: updated_entities, actions: rest_actions)
+            |> reset_form()
+
+          delete_entity(entity.entity_id)
+          #(updated_model, effect.none())
+        }
+        [EditEntity(original, _), ..rest_actions] -> {
+          let updated_entities =
+            list.map(model.entities, fn(entity) {
+              case entity.entity_id == original.entity_id {
+                True -> original
+                False -> entity
+              }
+            })
+          let updated_model =
+            Model(..model, entities: updated_entities, actions: rest_actions)
+            |> reset_form()
+
+          edit_entity(original, model.materials)
+          #(updated_model, effect.none())
+        }
+        [RemoveEntity(entity, deleted_flows, position), ..rest_actions] -> {
+          let updated_model =
+            Model(
+              ..model,
+              entities: [entity, ..model.entities],
+              flows: list.append(deleted_flows, model.flows),
+              actions: rest_actions,
+            )
+            |> reset_form()
+
+          case position {
+            Ok(pos) ->
+              create_entity_at_position(entity, model.materials, pos.x, pos.y)
+            Error(_) -> create_entity(entity, model.materials)
+          }
+
+          list.each(deleted_flows, fn(flow) { create_flow(flow) })
+
+          #(updated_model, effect.none())
+        }
+        [NewFlow(flow), ..rest_actions] -> {
+          let updated_flows =
+            list.filter(model.flows, fn(f) { f.flow_id != flow.flow_id })
+          let updated_model =
+            Model(..model, flows: updated_flows, actions: rest_actions)
+            |> reset_form()
+
+          delete_flow(flow.flow_id)
+          #(updated_model, effect.none())
+        }
+        [EditFlow(original, _), ..rest_actions] -> {
+          let updated_flows =
+            list.map(model.flows, fn(f) {
+              case f.flow_id == original.flow_id {
+                True -> original
+                False -> f
+              }
+            })
+          let updated_model =
+            Model(..model, flows: updated_flows, actions: rest_actions)
+            |> reset_form()
+
+          edit_flow(original)
+          #(updated_model, effect.none())
+        }
+        [RemoveFlow(flow), ..rest_actions] -> {
+          let updated_model =
+            Model(..model, flows: [flow, ..model.flows], actions: rest_actions)
+            |> reset_form()
+
+          create_flow(flow)
+          #(updated_model, effect.none())
+        }
+        [ResetMap(previous_model, positions), ..] -> {
+          let recreation_effect =
+            effect.from(fn(_dispatch) {
+              restore_d3_state(
+                previous_model.entities,
+                previous_model.materials,
+                previous_model.flows,
+              )
+
+              list.each(positions, fn(pair) {
+                let #(entity_id, position_result) = pair
+                case position_result {
+                  Ok(pos) -> set_entity_position(entity_id, pos.x, pos.y)
+                  Error(_) -> Nil
+                }
+              })
+
+              centre_view_on_nodes()
+            })
+          #(previous_model, recreation_effect)
+        }
+        [] -> #(model, effect.none())
+      }
+    }
+    ResetForm -> {
+      let updated_model = reset_form(model)
+      #(updated_model, effect.none())
+    }
+    ExportMap -> {
+      export_map_as_png()
+      #(model, effect.none())
+    }
+    ClearMap -> {
+      let entity_positions =
+        list.map(model.entities, fn(entity) {
+          let position = get_entity_position(entity.entity_id)
+          #(entity.entity_id, position)
+        })
+
+      let empty_model =
+        Model(
+          materials: [],
+          entities: [],
+          flows: [],
+          form: empty_form(),
+          current_form: NoForm,
+          next_material_id: 1,
+          next_entity_id: 1,
+          next_flow_id: 1,
+          selected_material_ids: [],
+          value_activities: [],
+          actions: [ResetMap(model, entity_positions), ..model.actions],
+        )
+
+      let recreation_effect =
+        effect.from(fn(_dispatch) { restore_d3_state([], [], []) })
+
+      #(empty_model, recreation_effect)
     }
     _ -> #(model, effect.none())
   }
@@ -646,35 +817,133 @@ fn render_controls(model: Model) -> Element(Message) {
       ),
     ],
     [
-      render_import_export_buttons(),
+      html.div([class("text-sm mb-2")], [
+        text(
+          "Hover over buttons for their descriptions. Selecting entities and flows on the diagram allows you to edit or delete them. Zoom and pan on the diagram to modify the view extent. Entities can be moved around and rearranged by dragging.",
+        ),
+      ]),
+      render_import_export_buttons(model),
       html.button(
         [
           class(
             "bg-blue-600 hover:bg-blue-400 px-3 py-2 rounded-sm cursor-pointer",
           ),
+          attribute.title("Add Entity"),
           event.on_click(StartEntityForm("")),
         ],
-        [text("Entity")],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute("d", "M12 4.5v15m7.5-7.5h-15"),
+              ]),
+            ],
+          ),
+        ],
       ),
       html.button(
         [
           class(
             "bg-green-600 hover:bg-green-400 px-3 py-2 rounded-sm cursor-pointer ml-2",
           ),
-          event.on_click(StartMaterialsForm),
+          attribute.title("Add Flow"),
+          event.on_click(StartFlowForm("")),
         ],
-        [text("Materials")],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute(
+                  "d",
+                  "M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5",
+                ),
+              ]),
+            ],
+          ),
+        ],
       ),
+      // html.button(
+      //   [
+      //     class(
+      //       "bg-green-600 hover:bg-green-400 px-3 py-2 rounded-sm cursor-pointer ml-2",
+      //     ),
+      //     attribute.title("Manage Materials"),
+      //     event.on_click(StartMaterialsForm),
+      //   ],
+      //   [
+      //     svg.svg(
+      //       [
+      //         attribute("stroke-width", "1.5"),
+      //         attribute("stroke", "currentColor"),
+      //         attribute("fill", "none"),
+      //         class("size-6"),
+      //       ],
+      //       [
+      //         svg.path([
+      //           attribute("stroke-linecap", "round"),
+      //           attribute("stroke-linejoin", "round"),
+      //           attribute(
+      //             "d",
+      //             "M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z M6 6h.008v.008H6V6Z",
+      //           ),
+      //         ]),
+      //       ],
+      //     ),
+      //   ],
+      // ),
       html.button(
         [
           class(
-            "bg-amber-600 hover:bg-amber-400 px-3 py-2 rounded-sm cursor-pointer ml-2",
+            "bg-red-600 hover:bg-red-400 px-3 py-2 rounded-sm cursor-pointer ml-2",
           ),
-          event.on_click(StartFlowForm("")),
+          attribute.title("Clear Diagram"),
+          event.on_click(ClearMap),
         ],
-        [text("Flow")],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute("d", "M6 18 18 6M6 6l12 12"),
+              ]),
+            ],
+          ),
+        ],
       ),
-      render_form(model),
+      html.div(
+        [
+          class("transition-all duration-300 ease-in-out"),
+          case model.current_form {
+            NoForm -> class("max-h-0 opacity-0")
+            _ -> class("max-h-256 opacity-100")
+          },
+        ],
+        [render_form(model)],
+      ),
+      render_delete_button(model.current_form),
     ],
   )
 }
@@ -723,7 +992,11 @@ fn update_existing_entity(
       }
     })
 
-  let updated_model = Model(..model, entities: updated_entities)
+  let updated_model =
+    Model(..model, entities: updated_entities, actions: [
+      EditEntity(original_entity, updated_entity),
+      ..model.actions
+    ])
 
   Ok(#(updated_entity, updated_model))
 }
@@ -744,6 +1017,22 @@ fn entity_decoder() {
     materials: materials,
     entity_type: entity_type,
   ))
+}
+
+type EntityPosition {
+  EntityPosition(x: Float, y: Float)
+}
+
+fn get_entity_position(entity_id: String) {
+  let position = get_entity_position_raw(entity_id)
+
+  let decoder = {
+    use x <- decode.field("x", decode.float)
+    use y <- decode.field("y", decode.float)
+    decode.success(EntityPosition(x, y))
+  }
+
+  decode.run(position, decoder)
 }
 
 // Material helpers
@@ -831,7 +1120,11 @@ fn update_existing_flow(
       }
     })
 
-  let updated_model = Model(..model, flows: updated_flows)
+  let updated_model =
+    Model(..model, flows: updated_flows, actions: [
+      EditFlow(original_flow, updated_flow),
+      ..model.actions
+    ])
 
   Ok(#(updated_flow, updated_model))
 }
@@ -930,7 +1223,6 @@ fn new_entity_form() {
     use entity_type <- form.field(
       "entity-type",
       form.parse_string
-        |> form.check_not_empty
         |> form.check(check_valid_entity_type),
     )
     form.success(EntityFormData(name: name, entity_type: entity_type))
@@ -1188,11 +1480,11 @@ fn render_entity_form(form: Form(FormData), model: Model) {
     html.form([event.on_submit(handle_submit), id("main-entity-form")], [
       render_input_field(form, "name", "Name"),
       render_entity_type_selection(form),
-      render_materials_selection(
-        model,
-        model.materials,
-        model.selected_material_ids,
-      ),
+      // render_materials_selection(
+    //   model,
+    //   model.materials,
+    //   model.selected_material_ids,
+    // ),
     ]),
     html.form([event.on_submit(NewValueActivity)], [
       html.label([], [text("Value Activities:")]),
@@ -1209,7 +1501,7 @@ fn render_entity_form(form: Form(FormData), model: Model) {
       ]
     ]),
     render_submit_button(model.current_form, "main-entity-form"),
-    render_delete_button(model.current_form),
+    // render_delete_button(model.current_form),
   ])
 }
 
@@ -1445,7 +1737,7 @@ fn render_entity_type_selection(form: Form(FormData)) {
             "" -> [attribute.value(""), attribute.selected(True)]
             _ -> [attribute.value("")]
           },
-          "Select entity type...",
+          "(none)",
         ),
         ..list.map(entity_types(), fn(entity_type) {
           html.option(
@@ -1657,26 +1949,65 @@ fn render_delete_button(current_form: FormType) {
   }
 }
 
-fn render_import_export_buttons() {
-  html.div([class("flex-1 mb-2")], [
+fn render_import_export_buttons(model: Model) {
+  html.div([class("flex gap-2 mb-2")], [
     html.button(
       [
         class(
           "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer",
         ),
+        attribute.title("Download File"),
         event.on_click(DownloadModel),
       ],
-      [text("Download")],
+      [
+        svg.svg(
+          [
+            attribute("stroke-width", "1.5"),
+            attribute("stroke", "currentColor"),
+            attribute("fill", "none"),
+            class("size-6"),
+          ],
+          [
+            svg.path([
+              attribute("stroke-linecap", "round"),
+              attribute("stroke-linejoin", "round"),
+              attribute(
+                "d",
+                "M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3",
+              ),
+            ]),
+          ],
+        ),
+      ],
     ),
     html.label(
       [
         class(
-          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block",
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer inline-block",
         ),
+        attribute.title("Load File"),
         attribute.for("import-file"),
+        attribute("tabindex", "0"),
       ],
       [
-        text("Import"),
+        svg.svg(
+          [
+            attribute("stroke-width", "1.5"),
+            attribute("stroke", "currentColor"),
+            attribute("fill", "none"),
+            class("size-6"),
+          ],
+          [
+            svg.path([
+              attribute("stroke-linecap", "round"),
+              attribute("stroke-linejoin", "round"),
+              attribute(
+                "d",
+                "M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5",
+              ),
+            ]),
+          ],
+        ),
         html.input([
           id("import-file"),
           attribute.type_("file"),
@@ -1685,7 +2016,88 @@ fn render_import_export_buttons() {
         ]),
       ],
     ),
+    html.button(
+      [
+        class(
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer",
+        ),
+        attribute.title("Export as PNG"),
+        event.on_click(ExportMap),
+      ],
+      [
+        svg.svg(
+          [
+            attribute("stroke-width", "1.5"),
+            attribute("stroke", "currentColor"),
+            attribute("fill", "none"),
+            class("size-6"),
+          ],
+          [
+            svg.path([
+              attribute("stroke-linecap", "round"),
+              attribute("stroke-linejoin", "round"),
+              attribute(
+                "d",
+                "M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25",
+              ),
+            ]),
+          ],
+        ),
+      ],
+    ),
+    render_undo(model),
   ])
+}
+
+// Action types
+type Action {
+  NewEntity(entity: Entity)
+  EditEntity(new: Entity, previous: Entity)
+  RemoveEntity(
+    entity: Entity,
+    deleted_flows: List(Flow),
+    position: Result(EntityPosition, List(decode.DecodeError)),
+  )
+  NewFlow(flow: Flow)
+  EditFlow(new: Flow, previous: Flow)
+  RemoveFlow(flow: Flow)
+  ResetMap(
+    previous_model: Model,
+    positions: List(#(String, Result(EntityPosition, List(decode.DecodeError)))),
+  )
+}
+
+fn render_undo(model: Model) {
+  case model.actions {
+    [] -> element.none()
+    _ ->
+      html.button(
+        [
+          class(
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer",
+          ),
+          event.on_click(Undo),
+          attribute.title("Undo"),
+        ],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute("d", "M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"),
+              ]),
+            ],
+          ),
+        ],
+      )
+  }
 }
 
 fn empty_form() {
@@ -1761,11 +2173,22 @@ fn init_resource_pooling() -> Nil
 @external(javascript, "./../components/resource_pooling.ffi.mjs", "createEntity")
 fn create_entity(entity: Entity, materials: List(Material)) -> Nil
 
+@external(javascript, "./../components/resource_pooling.ffi.mjs", "createEntity")
+fn create_entity_at_position(
+  entity: Entity,
+  materials: List(Material),
+  x: Float,
+  y: Float,
+) -> Nil
+
 @external(javascript, "./../components/resource_pooling.ffi.mjs", "editEntity")
 fn edit_entity(entity: Entity, materials: List(Material)) -> Nil
 
 @external(javascript, "./../components/resource_pooling.ffi.mjs", "deleteEntity")
 fn delete_entity(entity_id: String) -> Nil
+
+@external(javascript, "./../components/resource_pooling.ffi.mjs", "setEntityPosition")
+fn set_entity_position(entity_id: String, x: Float, y: Float) -> Nil
 
 @external(javascript, "./../components/resource_pooling.ffi.mjs", "updateMaterial")
 fn update_material(name: String, material_id: String) -> Nil
@@ -1785,9 +2208,18 @@ fn download_model_data(json_data: String) -> Nil
 @external(javascript, "./../components/resource_pooling.ffi.mjs", "setupFileImport")
 fn setup_file_import(dispatch: fn(String) -> Nil) -> Nil
 
-@external(javascript, "./../components/resource_pooling.ffi.mjs", "restoreD3StateAfterImport")
-fn restore_d3_state_after_import(
+@external(javascript, "./../components/resource_pooling.ffi.mjs", "centreViewOnNodes")
+fn centre_view_on_nodes() -> Nil
+
+@external(javascript, "./../components/resource_pooling.ffi.mjs", "restoreD3State")
+fn restore_d3_state(
   entities: List(Entity),
   materials: List(Material),
   flows: List(Flow),
 ) -> Nil
+
+@external(javascript, "./../components/resource_pooling.ffi.mjs", "exportMapAsPNG")
+fn export_map_as_png() -> Nil
+
+@external(javascript, "./../components/resource_pooling.ffi.mjs", "getEntityPosition")
+fn get_entity_position_raw(entity_id: String) -> dynamic.Dynamic

@@ -19,6 +19,10 @@ const ENTITY_COLOURS = {
     fill: "#fef3c7",
     stroke: "#d97706",
   },
+  "": {
+    fill: "#e4e4e7",
+    stroke: "#71717a",
+  },
 };
 
 const FLOW_COLORS = {
@@ -45,6 +49,18 @@ const CONFIG = {
   itemsPerMaterialColumn: 5,
   entityMargin: 40,
   flowHoverWidth: 8,
+  initialScale: 0.5,
+};
+
+const STYLES = {
+  fontFamily: "Arial, sans-serif",
+  fontSize: "14px",
+  smallFontSize: "13px",
+  badgeFontSize: "12px",
+  legendFontSize: "11px",
+  legendSmallFontSize: "9px",
+  legendTinyFontSize: "8px",
+  legendMicroFontSize: "7px",
 };
 
 // ============================================================================
@@ -155,6 +171,28 @@ export function deleteEntity(entityId) {
     nodes.splice(nodeIndex, 1);
     updateSimulation();
   }
+}
+
+export function setEntityPosition(entityId, x, y) {
+  if (!resourcePooling.g) return;
+
+  const node = nodes.find((n) => n.id === entityId);
+  if (node) {
+    node.x = x;
+    node.y = y;
+    node.fx = x;
+    node.fy = y;
+
+    const entityElement = resourcePooling.g.select(`#${entityId}`);
+    entityElement.attr("transform", `translate(${x}, ${y})`);
+
+    setTimeout(() => {
+      node.fx = null;
+      node.fy = null;
+    }, 100);
+  }
+
+  updateAllFlowPaths();
 }
 
 export function updateMaterial(name, materialId) {
@@ -299,17 +337,80 @@ export function setupFileImport(dispatch) {
   });
 }
 
-export function restoreD3StateAfterImport(entities, materials, flows) {
-  if (!window.pendingD3State) return;
+export function centreViewOnNodes() {
+  if (!resourcePooling.svg || nodes.length === 0) return;
 
+  let sumX = 0,
+    sumY = 0;
+  nodes.forEach((node) => {
+    sumX += node.x + (node.width || 150) / 2;
+    sumY += node.y + (node.height || 100) / 2;
+  });
+
+  const centroidX = sumX / nodes.length;
+  const centroidY = sumY / nodes.length;
+
+  const svgNode = resourcePooling.svg.node();
+  const svgWidth = svgNode.clientWidth;
+  const svgHeight = svgNode.clientHeight;
+
+  let minX = Infinity,
+    maxX = -Infinity;
+  let minY = Infinity,
+    maxY = -Infinity;
+
+  nodes.forEach((node) => {
+    minX = Math.min(minX, node.x);
+    maxX = Math.max(maxX, node.x + (node.width || 150));
+    minY = Math.min(minY, node.y);
+    maxY = Math.max(maxY, node.y + (node.height || 100));
+  });
+
+  const bboxWidth = maxX - minX;
+  const bboxHeight = maxY - minY;
+
+  const padding = 25;
+  const legendWidth = 120 + 30; // Legend width + left margin + padding
+
+  // Available width is reduced by legend width
+  const availableWidth = svgWidth - legendWidth - padding * 2;
+  const availableHeight = svgHeight - padding * 2;
+
+  const scaleX = availableWidth / bboxWidth;
+  const scaleY = availableHeight / bboxHeight;
+  const scale = Math.min(scaleX, scaleY, 1);
+
+  // Center in the available space (to the right of the legend)
+  const centerX = legendWidth + availableWidth / 2;
+  const centerY = svgHeight / 2;
+
+  const transform = d3.zoomIdentity
+    .translate(centerX, centerY)
+    .scale(scale)
+    .translate(-centroidX, -centroidY);
+
+  resourcePooling.g
+    .transition()
+    .duration(500)
+    .attr("transform", transform)
+    .on("end", () => {
+      resourcePooling.svg.call(d3.zoom().transform, transform);
+    });
+}
+
+export function restoreD3State(entities, materials, flows) {
   const d3State = window.pendingD3State;
 
   clearResourcePooling();
 
   entities.toArray().forEach((entity) => {
-    const nodeState = d3State.nodes.find((n) => n.id === entity.entity_id);
-    if (nodeState) {
-      createEntity(entity, materials, nodeState.x, nodeState.y);
+    if (d3State) {
+      const nodeState = d3State.nodes.find((n) => n.id === entity.entity_id);
+      if (nodeState) {
+        createEntity(entity, materials, nodeState.x, nodeState.y);
+      } else {
+        createEntity(entity, materials);
+      }
     } else {
       createEntity(entity, materials);
     }
@@ -319,7 +420,120 @@ export function restoreD3StateAfterImport(entities, materials, flows) {
     createFlow(flow);
   });
 
-  delete window.pendingD3State;
+  if (nodes.length > 0) {
+    centreViewOnNodes();
+  }
+
+  if (window.pendingD3State) {
+    delete window.pendingD3State;
+  }
+}
+
+export function exportMapAsPNG() {
+  if (!resourcePooling.svg || !resourcePooling.initialised) {
+    console.warn("Diagram not ready for export");
+    return null;
+  }
+
+  const svgNode = resourcePooling.svg.node();
+  const clonedSvg = svgNode.cloneNode(true);
+
+  const currentTransform = resourcePooling.g.attr("transform");
+
+  const clonedGroup = clonedSvg.querySelector("g");
+  if (clonedGroup && currentTransform) {
+    clonedGroup.setAttribute("transform", currentTransform);
+  }
+
+  const svgWidth = svgNode.clientWidth;
+  const svgHeight = svgNode.clientHeight;
+
+  clonedSvg.setAttribute("viewBox", `0 0 ${svgWidth} ${svgHeight}`);
+  clonedSvg.setAttribute("width", svgWidth);
+  clonedSvg.setAttribute("height", svgHeight);
+
+  // Add white background for the viewport
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", 0);
+  rect.setAttribute("y", 0);
+  rect.setAttribute("width", svgWidth);
+  rect.setAttribute("height", svgHeight);
+  rect.setAttribute("fill", "white");
+  clonedGroup.insertBefore(rect, clonedGroup.firstChild);
+
+  // Add font definitions to ensure consistent rendering
+  let defs = clonedSvg.querySelector("defs");
+  if (!defs) {
+    defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    clonedSvg.insertBefore(defs, clonedSvg.firstChild);
+  }
+
+  const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+  style.textContent = `
+    text {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+  `;
+  defs.appendChild(style);
+
+  clonedSvg.style.cursor = "default";
+
+  if (!clonedSvg.getAttribute("xmlns")) {
+    clonedSvg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  }
+
+  const serializer = new XMLSerializer();
+  const svgString = serializer.serializeToString(clonedSvg);
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+
+  const scale = 15;
+  canvas.width = svgWidth * scale;
+  canvas.height = svgHeight * scale;
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const img = new Image();
+  const svgBlob = new Blob([svgString], {
+    type: "image/svg+xml;charset=utf-8",
+  });
+  const url = URL.createObjectURL(svgBlob);
+
+  img.onload = function () {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(function (blob) {
+      const pngUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = pngUrl;
+      link.download = `resource-pooling-${new Date().toISOString().slice(0, 10)}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(pngUrl);
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  };
+
+  img.src = url;
+
+  return null;
+}
+
+export function getEntityPosition(entityId) {
+  if (!resourcePooling.g) return null;
+
+  const node = nodes.find((n) => n.id === entityId);
+  if (!node) return null;
+
+  return {
+    x: node.x || 0,
+    y: node.y || 0,
+    width: node.width || 150,
+    height: node.height || 100,
+  };
 }
 
 // ============================================================================
@@ -388,6 +602,7 @@ function createEntityTitle(entityGroup, name) {
     .attr("x", CONFIG.nameXPadding)
     .attr("y", CONFIG.nameHeight)
     .attr("text-anchor", "left")
+    .style("font-family", STYLES.fontFamily)
     .style("font-size", CONFIG.nameFontSize)
     .style("font-weight", "bold")
     .style("fill", "#e5e7eb")
@@ -462,6 +677,7 @@ function styleActivityBadge(badge, activity) {
     .append("text")
     .attr("x", 0)
     .attr("y", CONFIG.badgeHeight / 2 + 4)
+    .style("font-family", STYLES.fontFamily)
     .style("font-size", "12px")
     .style("fill", "#000000")
     .text(activity);
@@ -474,6 +690,7 @@ function styleActivityBadge(badge, activity) {
     .attr("width", badgeWidth)
     .attr("height", CONFIG.badgeHeight)
     .attr("rx", 10)
+    .style("font-family", STYLES.fontFamily)
     .style("fill", "#ffffff")
     .style("fill-opacity", "0.7")
     .style("stroke", "#000000")
@@ -563,6 +780,7 @@ function createMaterialItem(entityGroup, material, xOffset, rowInColumn) {
     .append("text")
     .attr("x", 10)
     .attr("y", 12)
+    .style("font-family", STYLES.fontFamily)
     .style("font-size", "13px")
     .style("fill", "#374151")
     .text(material.name);
@@ -1008,24 +1226,82 @@ function updateSimulation() {
 function initForceSimulation() {
   forceSimulation = d3
     .forceSimulation()
-    .force("charge", d3.forceManyBody().strength(-50))
     .force(
       "link",
       d3
         .forceLink()
         .id((d) => d.id)
-        .distance(100)
-        .strength(0.1),
+        .distance(150)
+        .strength(0.01),
     )
-    .force(
-      "collision",
-      d3.forceCollide().radius((d) => {
-        return Math.sqrt(d.width * d.width + d.height * d.height) / 2 + 10;
-      }),
-    )
+    .force("rectangleCollide", rectangleCollide())
     .on("tick", updateEntityPositions);
 
   return forceSimulation;
+}
+
+function rectangleCollide() {
+  let nodes;
+  let strength = 1.0;
+  const padding = 30;
+
+  function force(alpha) {
+    const k = alpha * strength;
+
+    for (let i = 0; i < nodes.length; i++) {
+      const nodeA = nodes[i];
+      const widthA = nodeA.width || 150;
+      const heightA = nodeA.height || 100;
+
+      const centerAx = nodeA.x + widthA / 2;
+      const centerAy = nodeA.y + heightA / 2;
+
+      for (let j = i + 1; j < nodes.length; j++) {
+        const nodeB = nodes[j];
+        const widthB = nodeB.width || 150;
+        const heightB = nodeB.height || 100;
+
+        const centerBx = nodeB.x + widthB / 2;
+        const centerBy = nodeB.y + heightB / 2;
+
+        const dx = centerBx - centerAx;
+        const dy = centerBy - centerAy;
+
+        const overlapX =
+          widthA / 2 + padding + (widthB / 2 + padding) - Math.abs(dx);
+        const overlapY =
+          heightA / 2 + padding + (heightB / 2 + padding) - Math.abs(dy);
+
+        if (overlapX > 0 && overlapY > 0) {
+          if (overlapX < overlapY) {
+            // Push apart horizontally
+            const push = overlapX * 0.5 * k;
+            const direction = dx === 0 ? Math.random() - 0.5 : Math.sign(dx);
+
+            nodeA.vx -= push * direction;
+            nodeB.vx += push * direction;
+          } else {
+            // Push apart vertically
+            const push = overlapY * 0.5 * k;
+            const direction = dy === 0 ? Math.random() - 0.5 : Math.sign(dy);
+
+            nodeA.vy -= push * direction;
+            nodeB.vy += push * direction;
+          }
+        }
+      }
+    }
+  }
+
+  force.initialize = function (_) {
+    nodes = _;
+  };
+
+  force.strength = function (_) {
+    return arguments.length ? ((strength = _), force) : strength;
+  };
+
+  return force;
 }
 
 function updateEntityPositions() {
@@ -1165,12 +1441,14 @@ function createResourcePooling() {
   setupZoomBehavior();
   resourcePooling.svg.append("defs");
   initForceSimulation();
+  createLegend();
 
   window.addEventListener("resize", () => {
     const newWidth = resourcePoolingDiv.clientWidth;
     const newHeight = window.innerHeight * 0.6;
 
     resourcePooling.svg.style("width", newWidth).attr("height", newHeight);
+    createLegend();
   });
 }
 
@@ -1189,6 +1467,11 @@ function setupZoomBehavior() {
     });
 
   resourcePooling.svg.call(zoom);
+
+  resourcePooling.svg.call(
+    zoom.transform,
+    d3.zoomIdentity.scale(CONFIG.initialScale),
+  );
 }
 
 function clearResourcePooling() {
@@ -1202,4 +1485,220 @@ function clearResourcePooling() {
       forceSimulation.force("link").links([]);
     }
   }
+}
+
+function createLegend() {
+  resourcePooling.svg.select(".legend").remove();
+
+  const svgHeight = parseFloat(resourcePooling.svg.attr("height"));
+  const legendHeight = 240;
+  const yOffset = (svgHeight - legendHeight) / 2;
+
+  const legendGroup = resourcePooling.svg
+    .append("g")
+    .attr("class", "legend")
+    .attr("transform", `translate(15, ${yOffset})`);
+
+  // Background rectangle
+  const legendWidth = 120;
+
+  legendGroup
+    .append("rect")
+    .attr("width", legendWidth)
+    .attr("height", legendHeight)
+    .attr("fill", "rgba(255, 255, 255, 0.95)")
+    .attr("stroke", "#374151")
+    .attr("stroke-width", 1)
+    .attr("rx", 3);
+
+  // Title
+  legendGroup
+    .append("text")
+    .attr("x", legendWidth / 2)
+    .attr("y", 16)
+    .attr("text-anchor", "middle")
+    .style("font-family", STYLES.fontFamily)
+    .style("font-size", "11px")
+    .style("font-weight", "bold")
+    .style("fill", "#1f2937")
+    .text("LEGEND");
+
+  let yPos = 32;
+
+  // Entity Types Section
+  legendGroup
+    .append("text")
+    .attr("x", 10)
+    .attr("y", yPos)
+    .style("font-family", STYLES.fontFamily)
+    .style("font-size", "9px")
+    .style("font-weight", "bold")
+    .style("fill", "#374151")
+    .text("Entities:");
+
+  yPos += 14;
+
+  Object.entries(ENTITY_COLOURS).forEach(([type, colors]) => {
+    if (type === "") return;
+
+    legendGroup
+      .append("rect")
+      .attr("x", 10)
+      .attr("y", yPos - 8)
+      .attr("width", 18)
+      .attr("height", 12)
+      .attr("fill", colors.fill)
+      .attr("stroke", colors.stroke)
+      .attr("stroke-width", 1)
+      .attr("rx", 1);
+
+    legendGroup
+      .append("text")
+      .attr("x", 32)
+      .attr("y", yPos)
+      .style("font-family", STYLES.fontFamily)
+      .style("font-size", "8px")
+      .style("fill", "#374151")
+      .text(type);
+
+    yPos += 15;
+  });
+
+  yPos += 5;
+
+  // Value Activities Section
+  legendGroup
+    .append("text")
+    .attr("x", 10)
+    .attr("y", yPos)
+    .style("font-family", STYLES.fontFamily)
+    .style("font-size", "9px")
+    .style("font-weight", "bold")
+    .style("fill", "#374151")
+    .text("Value Activity:");
+
+  yPos += 14;
+
+  const activityBadge = legendGroup
+    .append("g")
+    .attr("transform", `translate(10, ${yPos - 8})`);
+
+  activityBadge
+    .append("rect")
+    .attr("width", 50)
+    .attr("height", 12)
+    .attr("rx", 6)
+    .style("fill", "#ffffff")
+    .style("fill-opacity", "0.7")
+    .style("stroke", "#000000")
+    .style("stroke-width", 0.75);
+
+  activityBadge
+    .append("text")
+    .attr("x", 25)
+    .attr("y", 8)
+    .attr("text-anchor", "middle")
+    .style("font-family", STYLES.fontFamily)
+    .style("font-size", "7px")
+    .style("fill", "#000000")
+    .text("Activity");
+
+  yPos += 20;
+
+  // Flow Types Section
+  legendGroup
+    .append("text")
+    .attr("x", 10)
+    .attr("y", yPos)
+    .style("font-family", STYLES.fontFamily)
+    .style("font-size", "9px")
+    .style("font-weight", "bold")
+    .style("fill", "#374151")
+    .text("Flows:");
+
+  yPos += 14;
+
+  Object.entries(FLOW_COLORS).forEach(([type, color]) => {
+    legendGroup
+      .append("line")
+      .attr("x1", 10)
+      .attr("y1", yPos - 3)
+      .attr("x2", 28)
+      .attr("y2", yPos - 3)
+      .attr("stroke", color)
+      .attr("stroke-width", 1.5);
+
+    legendGroup
+      .append("text")
+      .attr("x", 32)
+      .attr("y", yPos)
+      .style("font-family", STYLES.fontFamily)
+      .style("font-size", "8px")
+      .style("fill", "#374151")
+      .text(type);
+
+    yPos += 13;
+  });
+
+  yPos += 5;
+
+  // Flow Direction & Future State
+  const arrowGroup1 = legendGroup.append("g");
+  arrowGroup1
+    .append("line")
+    .attr("x1", 10)
+    .attr("y1", yPos - 3)
+    .attr("x2", 28)
+    .attr("y2", yPos - 3)
+    .attr("stroke", "#4b5563")
+    .attr("stroke-width", 1)
+    .attr("marker-end", "url(#legend-arrow)");
+
+  arrowGroup1
+    .append("text")
+    .attr("x", 32)
+    .attr("y", yPos)
+    .style("font-family", STYLES.fontFamily)
+    .style("font-size", "8px")
+    .style("fill", "#374151")
+    .text("Direction");
+
+  yPos += 13;
+
+  legendGroup
+    .append("line")
+    .attr("x1", 10)
+    .attr("y1", yPos - 3)
+    .attr("x2", 28)
+    .attr("y2", yPos - 3)
+    .attr("stroke", "#4b5563")
+    .attr("stroke-width", 1)
+    .attr("stroke-dasharray", "3,2");
+
+  legendGroup
+    .append("text")
+    .attr("x", 32)
+    .attr("y", yPos)
+    .style("font-size", "8px")
+    .style("fill", "#374151")
+    .text("Future");
+
+  // Create arrow marker for legend
+  const defs = resourcePooling.svg.select("defs");
+  if (!defs.select("#legend-arrow").empty()) {
+    defs.select("#legend-arrow").remove();
+  }
+
+  defs
+    .append("marker")
+    .attr("id", "legend-arrow")
+    .attr("viewBox", "0 -5 10 10")
+    .attr("refX", 8)
+    .attr("refY", 0)
+    .attr("markerWidth", 3)
+    .attr("markerHeight", 3)
+    .attr("orient", "auto")
+    .append("path")
+    .attr("d", "M0,-5L10,0L0,5")
+    .attr("fill", "#4b5563");
 }

@@ -405,8 +405,8 @@
   .px-4 {
     padding-inline: calc(var(--spacing) * 4);
   }
-  .px-12 {
-    padding-inline: calc(var(--spacing) * 12);
+  .px-6 {
+    padding-inline: calc(var(--spacing) * 6);
   }
   .py-1 {
     padding-block: calc(var(--spacing) * 1);

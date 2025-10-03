@@ -10,9 +10,11 @@ const CONFIG = {
   hoverDuration: 200,
   bundleBeta: 0.9,
   alphaDecay: 0.1,
-  chargeStrength: 3,
-  linkStrength: 3,
-  chargeDistanceMax: 50,
+  chargeStrength: 0.1,
+  linkStrength: 0.1,
+  chargeDistanceMax: 100,
+  linkDistance: 1,
+  pathOffset: 5,
   hoverStrokeWidth: 2.5,
   arrowSize: 3,
 };
@@ -59,6 +61,8 @@ let flowMap = {
   tempNode: null,
   forceLayout: null,
   initialised: false,
+  unitSymbol: "",
+  unitLocation: "",
   bundleData: { nodes: [], links: [], paths: [] },
 };
 
@@ -401,7 +405,14 @@ export function setupFileImport(dispatch) {
   });
 }
 
-export function restoreD3State(nodes, paths) {
+export function setUnits(unitSymbol, unitLocation) {
+  flowMap.unitSymbol = unitSymbol;
+  flowMap.unitLocation = unitLocation;
+
+  createLegend();
+}
+
+export function restoreD3State(nodes, paths, unitSymbol, unitLocation) {
   const d3State = window.pendingD3State;
 
   clearFlowMap();
@@ -441,6 +452,8 @@ export function restoreD3State(nodes, paths) {
       path.value,
     );
   });
+
+  setUnits(unitSymbol, unitLocation);
 
   if (window.pendingD3State) {
     delete window.pendingD3State;
@@ -782,7 +795,7 @@ function createTempNode(mouseX, mouseY) {
 function createPathElements() {
   const line = d3
     .line()
-    .curve(d3.curveBundle.beta(CONFIG.bundleBeta))
+    .curve(d3.curveCatmullRom.alpha(1))
     .x((d) => d.x)
     .y((d) => d.y);
 
@@ -984,6 +997,18 @@ function generateSegments(pathData) {
   const length = calculateDistance(pathData.source, pathData.target);
   const segmentCount = Math.round(SCALES.segments(length));
 
+  const dx = pathData.target.x - pathData.source.x;
+  const dy = pathData.target.y - pathData.source.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  const perpX = -dy / dist;
+  const perpY = dx / dist;
+
+  const offsetAmount = CONFIG.pathOffset;
+
+  const basePerpX = perpX * offsetAmount;
+  const basePerpY = perpY * offsetAmount;
+
   const xScale = d3
     .scaleLinear()
     .domain([0, segmentCount + 1])
@@ -1001,8 +1026,8 @@ function generateSegments(pathData) {
 
   for (let i = 1; i <= segmentCount; i++) {
     const target = {
-      x: xScale(i),
-      y: yScale(i),
+      x: xScale(i) + basePerpX,
+      y: yScale(i) + basePerpY,
       generated: true,
     };
 
@@ -1097,8 +1122,17 @@ function updatePathScales() {
 }
 
 function setupForceLayout(visiblePaths, hoverAreas, line) {
-  visiblePaths.style("opacity", 0);
-  hoverAreas.style("opacity", 0);
+  const pathInitialSegments = new Map();
+
+  flowMap.bundleData.paths.forEach((p) => {
+    const existingPath = flowMap.pathsList.select(`#${p.id}`);
+    if (!existingPath.empty()) {
+      pathInitialSegments.set(
+        p.id,
+        p.segments.map((s) => ({ x: s.x, y: s.y })),
+      );
+    }
+  });
 
   stopForceLayout();
 
@@ -1113,21 +1147,101 @@ function setupForceLayout(visiblePaths, hoverAreas, line) {
         .strength(CONFIG.chargeStrength)
         .distanceMax(CONFIG.chargeDistanceMax),
     )
-    .force("link", d3.forceLink().strength(CONFIG.linkStrength).distance(1))
+    .force(
+      "link",
+      d3
+        .forceLink()
+        .strength(CONFIG.linkStrength)
+        .distance(CONFIG.linkDistance),
+    )
     .on("tick", function () {
-      visiblePaths.attr("d", (d) => line(d.segments));
-      hoverAreas.attr("d", (d) => line(d.segments));
+      // Don't update visuals during simulation
     })
     .on("end", function () {
-      visiblePaths
-        .transition()
-        .duration(CONFIG.pathAnimationDuration)
-        .style("opacity", 1);
-      hoverAreas
-        .transition()
-        .duration(CONFIG.pathAnimationDuration)
-        .style("opacity", 1);
+      // Store final bundled positions
+      const finalSegments = flowMap.bundleData.paths.map((p) =>
+        p.segments.map((s) => ({ x: s.x, y: s.y })),
+      );
+
+      // Separate new paths from existing paths
+      const newPaths = visiblePaths.filter(
+        (d) => !pathInitialSegments.has(d.id),
+      );
+      const existingPaths = visiblePaths.filter((d) =>
+        pathInitialSegments.has(d.id),
+      );
+
+      if (!newPaths.empty()) {
+        const newPathLengths = newPaths
+          .nodes()
+          .map((node) => node.getTotalLength());
+
+        newPaths
+          .attr("d", (d, i) => {
+            const dataIndex = flowMap.bundleData.paths.findIndex(
+              (p) => p.id === d.id,
+            );
+            return line(finalSegments[dataIndex]);
+          })
+          .attr(
+            "stroke-dasharray",
+            (d, i) => `${newPathLengths[i]} ${newPathLengths[i]}`,
+          )
+          .attr("stroke-dashoffset", (d, i) => newPathLengths[i])
+          .transition()
+          .duration(CONFIG.pathAnimationDuration)
+          .attr("stroke-dashoffset", 0)
+          .on("end", function () {
+            d3.select(this).attr("stroke-dasharray", "none");
+          });
+
+        newPaths.each(function (d) {
+          const dataIndex = flowMap.bundleData.paths.findIndex(
+            (p) => p.id === d.id,
+          );
+          hoverAreas
+            .filter((hd) => hd.id === d.id)
+            .attr("d", line(finalSegments[dataIndex]));
+        });
+      }
+
+      if (!existingPaths.empty()) {
+        const duration = CONFIG.pathAnimationDuration;
+        const startTime = Date.now();
+
+        function animate() {
+          const elapsed = Date.now() - startTime;
+          const t = Math.min(elapsed / duration, 1);
+          const eased = d3.easeCubicInOut(t);
+
+          existingPaths.each(function (d) {
+            const dataIndex = flowMap.bundleData.paths.findIndex(
+              (p) => p.id === d.id,
+            );
+            const initial = pathInitialSegments.get(d.id);
+            const final = finalSegments[dataIndex];
+
+            const interpolatedSegments = initial.map((s, j) => ({
+              x: s.x + (final[j].x - s.x) * eased,
+              y: s.y + (final[j].y - s.y) * eased,
+            }));
+
+            d3.select(this).attr("d", line(interpolatedSegments));
+
+            hoverAreas
+              .filter((hd) => hd.id === d.id)
+              .attr("d", line(interpolatedSegments));
+          });
+
+          if (t < 1) {
+            requestAnimationFrame(animate);
+          }
+        }
+
+        animate();
+      }
     });
+
   flowMap.forceLayout
     .nodes(flowMap.bundleData.nodes)
     .force("link")
@@ -1239,53 +1353,80 @@ function createLegend() {
     maxValue,
   ].filter((v) => v > 0);
 
-  const legendX = 15;
-  const legendY = flowMap.svg.attr("height") - 70;
-
-  const legendHeight = legendValues.length * 12 + 20;
-  legendGroup
-    .append("rect")
-    .attr("x", legendX - 5)
-    .attr("y", legendY - 15)
-    .attr("width", 100)
-    .attr("height", legendHeight)
-    .attr("fill", COLORS.legendBackground)
-    .attr("stroke", COLORS.node)
-    .attr("stroke-width", 0.5)
-    // .attr("opacity", 0.9)
-    .attr("rx", 2);
+  const legendX = 20;
+  const svgHeight = parseFloat(flowMap.svg.attr("height"));
+  const legendHeight = legendValues.length * 20 + 25;
+  const legendY = svgHeight - legendHeight - 10;
 
   legendGroup
     .append("text")
-    .attr("x", legendX)
-    .attr("y", legendY - 5)
-    .style("font-size", "5px")
+    .attr("x", legendX + 3)
+    .attr("y", legendY)
+    .style("font-size", "10px")
     .style("font-family", STYLES.fontFamily)
     .style("font-weight", "bold")
     .style("fill", COLORS.text)
-    .text("Flow Value");
+    .text("LEGEND");
+
+  const textElements = [];
 
   legendValues.forEach((value, i) => {
-    const y = legendY + 5 + i * 12;
+    const y = legendY + 15 + i * 20;
 
     legendGroup
       .append("line")
-      .attr("x1", legendX)
+      .attr("x1", legendX + 3)
       .attr("y1", y)
-      .attr("x2", legendX + 20)
+      .attr("x2", legendX + 35)
       .attr("y2", y)
       .attr("stroke", COLORS.path)
       .attr("stroke-width", SCALES.pathThickness(value));
 
-    legendGroup
+    const formattedValue = formatValueWithUnit(
+      value,
+      flowMap.unitSymbol,
+      flowMap.unitLocation,
+    );
+
+    const textElement = legendGroup
       .append("text")
-      .attr("x", legendX + 25)
+      .attr("x", legendX + 42)
       .attr("y", y + 1.5)
-      .style("font-size", "4px")
+      .style("font-size", "8px")
       .style("font-family", STYLES.fontFamily)
       .style("fill", COLORS.text)
-      .text(Math.round(value).toLocaleString());
+      .text(formattedValue);
+
+    textElements.push(textElement);
   });
+
+  const legendBBox = legendGroup.node().getBBox();
+  const legendWidth = legendBBox.width + 10;
+
+  legendGroup
+    .insert("rect", ":first-child")
+    .attr("x", legendX - 5)
+    .attr("y", legendY - 15)
+    .attr("width", legendWidth)
+    .attr("height", legendHeight)
+    .attr("fill", COLORS.legendBackground)
+    .attr("stroke", COLORS.node)
+    .attr("stroke-width", 0.5)
+    .attr("rx", 2);
+}
+
+function formatValueWithUnit(value, unitSymbol, unitLocation) {
+  const formattedNumber = Math.round(value).toLocaleString();
+
+  if (!unitSymbol) return formattedNumber;
+
+  if (unitLocation === "before") {
+    return `${unitSymbol}${formattedNumber}`;
+  } else if (unitLocation === "after") {
+    return `${formattedNumber} ${unitSymbol}`;
+  }
+
+  return formattedNumber;
 }
 
 // ============================================================================
@@ -1309,6 +1450,7 @@ function createMap() {
     const newHeight = window.innerHeight * 0.6;
 
     flowMap.svg.style("width", newWidth).attr("height", newHeight);
+    createLegend();
   });
 }
 

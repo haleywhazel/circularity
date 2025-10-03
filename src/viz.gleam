@@ -23,7 +23,7 @@ type Model {
 }
 
 fn init(_) {
-  Model("Flow Map", True)
+  Model("Trade Flow Map", True)
 }
 
 // Update
@@ -35,7 +35,7 @@ type Message {
 
 fn update(model: Model, message: Message) -> Model {
   case message {
-    FlowMap -> Model("Flow Map", model.show_menu)
+    FlowMap -> Model("Trade Flow Map", model.show_menu)
     ResourcePooling -> Model("Resource Pooling", model.show_menu)
     ToggleMenu -> Model(model.page, !model.show_menu)
   }
@@ -77,10 +77,10 @@ fn view(model) {
         html.div([menu_items_class(model)], [
           html.a(
             [
-              link_class("Flow Map", model),
+              link_class("Trade Flow Map", model),
               event.on_click(FlowMap),
             ],
-            [text("Flow Map")],
+            [text("Trade Flow Map")],
           ),
           html.a(
             [
@@ -92,9 +92,9 @@ fn view(model) {
         ]),
       ],
     ),
-    html.div([class("flex flex-col px-12 flex-1 min-w-0")], [
+    html.div([class("flex flex-col px-6 flex-1 min-w-0")], [
       html.div([class("flex-1 w-full py-4")], [
-        html.div([content_class(model, "Flow Map")], [flow_map.element()]),
+        html.div([content_class(model, "Trade Flow Map")], [flow_map.element()]),
         html.div([content_class(model, "Resource Pooling")], [
           resource_pooling.element(),
         ]),

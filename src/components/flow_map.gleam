@@ -46,6 +46,7 @@ type Model {
     next_path_id: Int,
     nodes: List(Node),
     paths: List(Path),
+    units: Unit,
     selected_coords: Option(#(Float, Float)),
     selected_node: Option(String),
   )
@@ -93,6 +94,7 @@ fn empty_model() {
     next_path_id: 1,
     nodes: [],
     paths: [],
+    units: Unit("", ""),
     selected_coords: None,
     selected_node: None,
   )
@@ -103,6 +105,8 @@ fn model_decoder() {
   use paths <- decode.field("paths", decode.list(path_decoder()))
   use next_node_id <- decode.field("next_node_id", decode.int)
   use next_path_id <- decode.field("next_path_id", decode.int)
+  use units <- decode.field("units", unit_decoder())
+
   decode.success(Model(
     form: empty_form(),
     current_form: NoForm,
@@ -111,6 +115,7 @@ fn model_decoder() {
     next_path_id: next_path_id,
     nodes: nodes,
     paths: paths,
+    units: units,
     selected_coords: None,
     selected_node: None,
   ))
@@ -125,12 +130,14 @@ type Message {
   // Control messages
   StartNodeForm(node_id: String)
   NodeFormSubmit(Result(FormData, Form(FormData)))
+  StartUnitForm
   StartPathForm(path_id: String)
   PathFormSubmit(Result(FormData, Form(FormData)))
   LocationSearch(query: List(#(String, String)))
   LocationSearchResult(result: Result(LocationResult, http.HttpError))
   DeleteNode(node_id: String)
   DeletePath(path_id: String)
+  UnitFormSubmit(Result(FormData, Form(FormData)))
   Undo
   ResetForm
   DownloadModel
@@ -317,7 +324,7 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
       case model.selected_node {
         Some(node_id) -> {
           let path_with_origin_node_id =
-            new_path_form()
+            new_path_form(model)
             |> form.set_values([#("origin_node_id", node_id)])
           let updated_model =
             Model(
@@ -329,7 +336,11 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
         }
         None -> {
           let updated_model =
-            Model(..model, form: new_path_form(), current_form: NewPathForm)
+            Model(
+              ..model,
+              form: new_path_form(model),
+              current_form: NewPathForm,
+            )
           #(updated_model, effect.none())
         }
       }
@@ -346,7 +357,7 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
           let updated_model =
             Model(
               ..model,
-              form: edit_path_form(path),
+              form: edit_path_form(model, path),
               current_form: EditPathForm(path.path_id),
             )
           #(updated_model, effect.none())
@@ -410,6 +421,28 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
           #(model, effect.none())
         }
       }
+    }
+    StartUnitForm -> {
+      #(
+        Model(..model, form: new_unit_form(model), current_form: UnitForm),
+        effect.none(),
+      )
+    }
+    UnitFormSubmit(Ok(UnitFormData(unit_symbol, unit_location))) -> {
+      let updated_model =
+        Model(..model, units: Unit(unit_symbol, unit_location), actions: [
+          ChangeUnit(model.units),
+          ..model.actions
+        ])
+        |> reset_form()
+
+      set_units(unit_symbol, unit_location)
+
+      #(updated_model, effect.none())
+    }
+    UnitFormSubmit(Error(form)) -> {
+      let updated_model = Model(..model, form: form)
+      #(updated_model, effect.none())
     }
     Undo -> {
       case model.actions {
@@ -507,21 +540,36 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
             path.destination_node_id,
             path.value,
           )
+
           #(updated_model, effect.none())
         }
         [ResetMap(previous_model), ..] -> {
           let recreation_effect =
             effect.from(fn(_dispatch) {
-              restore_d3_state(previous_model.nodes, previous_model.paths)
+              restore_d3_state(
+                previous_model.nodes,
+                previous_model.paths,
+                previous_model.units.unit_symbol,
+                previous_model.units.unit_location,
+              )
             })
           #(previous_model, recreation_effect)
         }
         [GenerateMap(previous_model), ..] -> {
           let recreation_effect =
             effect.from(fn(_dispatch) {
-              restore_d3_state(previous_model.nodes, previous_model.paths)
+              restore_d3_state(
+                previous_model.nodes,
+                previous_model.paths,
+                previous_model.units.unit_symbol,
+                previous_model.units.unit_location,
+              )
             })
           #(previous_model, recreation_effect)
+        }
+        [ChangeUnit(original_unit), ..] -> {
+          set_units(original_unit.unit_symbol, original_unit.unit_location)
+          #(Model(..model, units: original_unit), effect.none())
         }
         [] -> #(model, effect.none())
       }
@@ -571,7 +619,12 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
         Ok(imported_model) -> {
           let recreation_effect =
             effect.from(fn(_dispatch) {
-              restore_d3_state(imported_model.nodes, imported_model.paths)
+              restore_d3_state(
+                imported_model.nodes,
+                imported_model.paths,
+                imported_model.units.unit_symbol,
+                imported_model.units.unit_location,
+              )
             })
           #(imported_model, recreation_effect)
         }
@@ -587,7 +640,12 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
 
       let recreation_effect =
         effect.from(fn(_dispatch) {
-          restore_d3_state(random_model.nodes, random_model.paths)
+          restore_d3_state(
+            random_model.nodes,
+            random_model.paths,
+            random_model.units.unit_symbol,
+            random_model.units.unit_location,
+          )
         })
 
       #(
@@ -597,10 +655,21 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
     }
     ClearMap -> {
       let updated_model =
-        Model(..empty_model(), actions: [ResetMap(model), ..model.actions])
+        Model(
+          ..empty_model(),
+          actions: [ResetMap(model), ..model.actions],
+          units: model.units,
+        )
 
       let recreation_effect =
-        effect.from(fn(_dispatch) { restore_d3_state([], []) })
+        effect.from(fn(_dispatch) {
+          restore_d3_state(
+            [],
+            [],
+            model.units.unit_symbol,
+            model.units.unit_location,
+          )
+        })
 
       #(updated_model, recreation_effect)
     }
@@ -612,7 +681,7 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
 fn view(model: Model) -> Element(Message) {
   html.div([class("flex flex-1")], [
     html.div([class("flex-col w-2/3 p-4")], [
-      html.h1([class("text-4xl font-extrabold mb-6")], [text("Flow map")]),
+      html.h1([class("text-4xl font-extrabold mb-6")], [text("Trade Flow Map")]),
       html.div(
         [
           class("flex-1 border-2 border-solid border-gray-900 rounded-lg p-1"),
@@ -692,6 +761,35 @@ fn render_controls(model: Model) -> Element(Message) {
                 attribute(
                   "d",
                   "M4 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M20 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M5 10Q12 3 19 10",
+                ),
+              ]),
+            ],
+          ),
+        ],
+      ),
+      html.button(
+        [
+          class(
+            "bg-amber-600 hover:bg-amber-400 px-3 py-2 rounded-sm cursor-pointer ml-2",
+          ),
+          attribute.title("Set Units"),
+          event.on_click(StartUnitForm),
+        ],
+        [
+          svg.svg(
+            [
+              attribute("stroke-width", "1.5"),
+              attribute("stroke", "currentColor"),
+              attribute("fill", "none"),
+              class("size-6"),
+            ],
+            [
+              svg.path([
+                attribute("stroke-linecap", "round"),
+                attribute("stroke-linejoin", "round"),
+                attribute(
+                  "d",
+                  "M14.121 7.629A3 3 0 0 0 9.017 9.43c-.023.212-.002.425.028.636l.506 3.541a4.5 4.5 0 0 1-.43 2.65L9 16.5l1.539-.513a2.25 2.25 0 0 1 1.422 0l.655.218a2.25 2.25 0 0 0 1.718-.122L15 15.75M8.25 12H12m9 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
                 ),
               ]),
             ],
@@ -943,12 +1041,24 @@ fn decode_location_result() {
   }
 }
 
+// Unit types
+type Unit {
+  Unit(unit_symbol: String, unit_location: String)
+}
+
+fn unit_decoder() {
+  use unit_symbol <- decode.field("unit_symbol", decode.string)
+  use unit_location <- decode.field("unit_location", decode.string)
+  decode.success(Unit(unit_symbol: unit_symbol, unit_location: unit_location))
+}
+
 // Form helpers
 type FormType {
   NewNodeForm
   EditNodeForm(node_id: String)
   NewPathForm
   EditPathForm(node_id: String)
+  UnitForm
   NoForm
 }
 
@@ -959,6 +1069,7 @@ type FormData {
     destination_node_id: String,
     value: Float,
   )
+  UnitFormData(unit_symbol: String, unit_location: String)
   EmptyForm
 }
 
@@ -969,6 +1080,7 @@ type Action {
   NewPath(path: Path)
   EditPath(new: Path, previous: Path)
   RemovePath(path: Path)
+  ChangeUnit(original_unit: Unit)
   GenerateMap(previous_model: Model)
   ResetMap(previous_model: Model)
 }
@@ -1000,8 +1112,8 @@ fn edit_node_form(node: Node) -> Form(FormData) {
   ])
 }
 
-fn edit_path_form(path: Path) -> Form(FormData) {
-  new_path_form()
+fn edit_path_form(model: Model, path: Path) -> Form(FormData) {
+  new_path_form(model)
   |> form.set_values([
     #("origin_node_id", path.origin_node_id),
     #("destination_node_id", path.destination_node_id),
@@ -1009,7 +1121,7 @@ fn edit_path_form(path: Path) -> Form(FormData) {
   ])
 }
 
-fn new_path_form() -> Form(FormData) {
+fn new_path_form(model: Model) -> Form(FormData) {
   form.new({
     use origin_node_id <- form.field(
       "origin_node_id",
@@ -1023,11 +1135,27 @@ fn new_path_form() -> Form(FormData) {
       }
     }
 
+    let check_if_combination_exists = fn(id) {
+      case
+        model.current_form,
+        list.filter(model.paths, fn(path) {
+          path.origin_node_id == origin_node_id
+          && path.destination_node_id == id
+        })
+        |> list.length()
+      {
+        EditPathForm(_), _ -> Ok(id)
+        _, 0 -> Ok(id)
+        _, _ -> Error("origin and destination combination exists")
+      }
+    }
+
     use destination_node_id <- form.field(
       "destination_node_id",
       form.parse_string
         |> form.check_not_empty
-        |> form.check(check_if_is_origin),
+        |> form.check(check_if_is_origin)
+        |> form.check(check_if_combination_exists),
     )
 
     use value <- form.field("value", { form.parse_float })
@@ -1040,12 +1168,41 @@ fn new_path_form() -> Form(FormData) {
   })
 }
 
+fn new_unit_form(model: Model) -> Form(FormData) {
+  form.new({
+    use unit_symbol <- form.field("unit_symbol", form.parse_string)
+
+    let not_empty_if_symbol_exists = fn(unit_location) {
+      case unit_symbol, unit_location {
+        "", "" -> Ok("")
+        _, "" -> Error("unit location must be specified")
+        _, _ -> Ok(unit_location)
+      }
+    }
+
+    use unit_location <- form.field(
+      "unit_location",
+      form.parse_string |> form.check(not_empty_if_symbol_exists),
+    )
+
+    form.success(UnitFormData(
+      unit_symbol: unit_symbol,
+      unit_location: unit_location,
+    ))
+  })
+  |> form.set_values([
+    #("unit_symbol", model.units.unit_symbol),
+    #("unit_location", model.units.unit_location),
+  ])
+}
+
 fn render_form(model: Model) {
   case model.current_form {
     NewNodeForm | EditNodeForm(_) ->
       render_node_form(model.form, model.current_form)
     NewPathForm | EditPathForm(_) ->
       render_path_form(model.form, model.nodes, model.current_form)
+    UnitForm -> render_unit_form(model.form, model.current_form)
     _ -> element.none()
   }
 }
@@ -1100,6 +1257,23 @@ fn render_path_form(
         nodes,
       ),
       render_input_field(form, "value", "Value"),
+      render_submit_button(current_form),
+    ]),
+  ])
+}
+
+fn render_unit_form(form: Form(FormData), current_form: FormType) {
+  let handle_submit = fn(values) {
+    form
+    |> form.add_values(values)
+    |> form.run
+    |> UnitFormSubmit
+  }
+
+  html.div([class("flex-1 py-2")], [
+    html.form([event.on_submit(handle_submit)], [
+      render_input_field(form, "unit_symbol", "Unit Symbol"),
+      render_unit_location_select_field(form),
       render_submit_button(current_form),
     ]),
   ])
@@ -1251,13 +1425,61 @@ fn render_node_select_field(
   ])
 }
 
+fn render_unit_location_select_field(form: Form(FormData)) {
+  let errors = form.field_error_messages(form, "unit_location")
+  html.div([], [
+    html.div([class("py-2")], [
+      html.label([attribute.for("unit_location")], [text("Unit Location: ")]),
+    ]),
+    html.select(
+      [
+        class("w-full bg-gray-200 text-gray-700 rounded-sm px-2 py-1"),
+        id("unit_location"),
+        attribute.name("unit_location"),
+      ],
+      [
+        html.option(
+          [
+            attribute.value(""),
+            attribute.selected(form.field_value(form, "unit_location") == ""),
+          ],
+          "Select unit location...",
+        ),
+        html.option(
+          [
+            attribute.value("before"),
+            attribute.selected(
+              form.field_value(form, "unit_location") == "before",
+            ),
+          ],
+          "Before number",
+        ),
+        html.option(
+          [
+            attribute.value("after"),
+            attribute.selected(
+              form.field_value(form, "unit_location") == "after",
+            ),
+          ],
+          "After number",
+        ),
+      ],
+    ),
+    ..list.map(errors, fn(error_message) {
+      html.p([attribute.class("mt-0.5 text-xs text-red-300")], [
+        html.text(error_message),
+      ])
+    })
+  ])
+}
+
 fn render_submit_button(current_form: FormType) {
   let button_text = case current_form {
     NewNodeForm -> "Add Node"
     EditNodeForm(_) -> "Edit Node"
     NewPathForm -> "Add Path"
     EditPathForm(_) -> "Edit Path"
-    NoForm -> "Submit"
+    NoForm | UnitForm -> "Submit"
   }
 
   html.div([class("pt-4")], [
@@ -1508,6 +1730,7 @@ fn generate_random_map() -> Model {
     next_path_id: next_path_id,
     nodes: nodes,
     paths: list.flatten(paths) |> list.filter(fn(path) { path.path_id != "" }),
+    units: Unit("£", "before"),
   )
 }
 
@@ -1546,6 +1769,9 @@ fn edit_path(
 @external(javascript, "./../components/flow_map.ffi.mjs", "deletePath")
 fn delete_path(path_id: String) -> Nil
 
+@external(javascript, "./../components/flow_map.ffi.mjs", "setUnits")
+fn set_units(unit_symbol: String, unit_location: String) -> Nil
+
 @external(javascript, "./../components/flow_map.ffi.mjs", "removeTempNode")
 fn remove_temp_node() -> Nil
 
@@ -1559,7 +1785,12 @@ fn download_model_data(json_data: String) -> Nil
 fn setup_file_import(dispatch: fn(String) -> Nil) -> Nil
 
 @external(javascript, "./../components/flow_map.ffi.mjs", "restoreD3State")
-fn restore_d3_state(nodes: List(Node), paths: List(Path)) -> Nil
+fn restore_d3_state(
+  nodes: List(Node),
+  paths: List(Path),
+  unit_symbol: String,
+  unit_location: String,
+) -> Nil
 
 @external(javascript, "./../components/flow_map.ffi.mjs", "exportMapAsPNG")
 fn export_map_as_png() -> Nil

@@ -3718,9 +3718,6 @@ function p(attrs, children) {
 function a(attrs, children) {
   return element2("a", attrs, children);
 }
-function span(attrs, children) {
-  return element2("span", attrs, children);
-}
 function button(attrs, children) {
   return element2("button", attrs, children);
 }
@@ -4784,7 +4781,7 @@ function diff(events, old, new$9) {
 }
 
 // build/dev/javascript/lustre/lustre/vdom/reconciler.ffi.mjs
-var setTimeout = globalThis.setTimeout;
+var setTimeout2 = globalThis.setTimeout;
 var clearTimeout = globalThis.clearTimeout;
 var createElementNS = (ns, name2) => document2().createElementNS(ns, name2);
 var createTextNode = (data) => document2().createTextNode(data);
@@ -5137,7 +5134,7 @@ var Reconciler = class {
     const debounce = debouncers.get(type);
     if (debounce) {
       clearTimeout(debounce.timeout);
-      debounce.timeout = setTimeout(() => {
+      debounce.timeout = setTimeout2(() => {
         if (event4 === throttles.get(type)?.lastEvent) return;
         this.#dispatch(data, path2, type, immediate);
       }, debounce.delay);
@@ -7843,9 +7840,11 @@ var CONFIG = {
   hoverDuration: 200,
   bundleBeta: 0.9,
   alphaDecay: 0.1,
-  chargeStrength: 3,
-  linkStrength: 3,
-  chargeDistanceMax: 50,
+  chargeStrength: 0.1,
+  linkStrength: 0.1,
+  chargeDistanceMax: 100,
+  linkDistance: 1,
+  pathOffset: 5,
   hoverStrokeWidth: 2.5,
   arrowSize: 3
 };
@@ -7884,6 +7883,8 @@ var flowMap = {
   tempNode: null,
   forceLayout: null,
   initialised: false,
+  unitSymbol: "",
+  unitLocation: "",
   bundleData: { nodes: [], links: [], paths: [] }
 };
 var messageDispatch = null;
@@ -8159,7 +8160,12 @@ function setupFileImport(dispatch) {
     }
   });
 }
-function restoreD3State(nodes2, paths) {
+function setUnits(unitSymbol, unitLocation) {
+  flowMap.unitSymbol = unitSymbol;
+  flowMap.unitLocation = unitLocation;
+  createLegend();
+}
+function restoreD3State(nodes2, paths, unitSymbol, unitLocation) {
   const d3State = window.pendingD3State;
   clearFlowMap();
   nodes2.toArray().forEach((node) => {
@@ -8189,6 +8195,7 @@ function restoreD3State(nodes2, paths) {
       path2.value
     );
   });
+  setUnits(unitSymbol, unitLocation);
   if (window.pendingD3State) {
     delete window.pendingD3State;
   }
@@ -8385,7 +8392,7 @@ function createTempNode(mouseX, mouseY) {
   flowMap.tempNode = flowMap.nodesList.append("circle").attr("cx", mouseX).attr("cy", mouseY).attr("r", CONFIG.nodeRadius).attr("fill", COLORS.tempNode).attr("stroke", COLORS.nodeStroke).attr("stroke-width", STYLES.strokeWidth.node).attr("opacity", 0.7);
 }
 function createPathElements() {
-  const line = d3.line().curve(d3.curveBundle.beta(CONFIG.bundleBeta)).x((d) => d.x).y((d) => d.y);
+  const line = d3.line().curve(d3.curveCatmullRom.alpha(1)).x((d) => d.x).y((d) => d.y);
   clearExistingPaths();
   const hoverAreas = createHoverAreas(line);
   const visiblePaths = createVisiblePaths(line);
@@ -8494,6 +8501,14 @@ function removePathLinks(pathToRemove) {
 function generateSegments(pathData) {
   const length4 = calculateDistance(pathData.source, pathData.target);
   const segmentCount = Math.round(SCALES.segments(length4));
+  const dx = pathData.target.x - pathData.source.x;
+  const dy = pathData.target.y - pathData.source.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const perpX = -dy / dist;
+  const perpY = dx / dist;
+  const offsetAmount = CONFIG.pathOffset;
+  const basePerpX = perpX * offsetAmount;
+  const basePerpY = perpY * offsetAmount;
   const xScale = d3.scaleLinear().domain([0, segmentCount + 1]).range([pathData.source.x, pathData.target.x]);
   const yScale = d3.scaleLinear().domain([0, segmentCount + 1]).range([pathData.source.y, pathData.target.y]);
   let source = pathData.source;
@@ -8502,8 +8517,8 @@ function generateSegments(pathData) {
   const links2 = [];
   for (let i = 1; i <= segmentCount; i++) {
     const target = {
-      x: xScale(i),
-      y: yScale(i),
+      x: xScale(i) + basePerpX,
+      y: yScale(i) + basePerpY,
       generated: true
     };
     local.push(target);
@@ -8575,18 +8590,80 @@ function updatePathScales() {
   SCALES.pathThickness.domain([0, totalSum]);
 }
 function setupForceLayout(visiblePaths, hoverAreas, line) {
-  visiblePaths.style("opacity", 0);
-  hoverAreas.style("opacity", 0);
+  const pathInitialSegments = /* @__PURE__ */ new Map();
+  flowMap.bundleData.paths.forEach((p2) => {
+    const existingPath = flowMap.pathsList.select(`#${p2.id}`);
+    if (!existingPath.empty()) {
+      pathInitialSegments.set(
+        p2.id,
+        p2.segments.map((s) => ({ x: s.x, y: s.y }))
+      );
+    }
+  });
   stopForceLayout();
   flowMap.forceLayout = d3.forceSimulation().alphaDecay(CONFIG.alphaDecay).randomSource(d3.randomLcg(42)).force(
     "charge",
     d3.forceManyBody().strength(CONFIG.chargeStrength).distanceMax(CONFIG.chargeDistanceMax)
-  ).force("link", d3.forceLink().strength(CONFIG.linkStrength).distance(1)).on("tick", function() {
-    visiblePaths.attr("d", (d) => line(d.segments));
-    hoverAreas.attr("d", (d) => line(d.segments));
+  ).force(
+    "link",
+    d3.forceLink().strength(CONFIG.linkStrength).distance(CONFIG.linkDistance)
+  ).on("tick", function() {
   }).on("end", function() {
-    visiblePaths.transition().duration(CONFIG.pathAnimationDuration).style("opacity", 1);
-    hoverAreas.transition().duration(CONFIG.pathAnimationDuration).style("opacity", 1);
+    const finalSegments = flowMap.bundleData.paths.map(
+      (p2) => p2.segments.map((s) => ({ x: s.x, y: s.y }))
+    );
+    const newPaths = visiblePaths.filter(
+      (d) => !pathInitialSegments.has(d.id)
+    );
+    const existingPaths = visiblePaths.filter(
+      (d) => pathInitialSegments.has(d.id)
+    );
+    if (!newPaths.empty()) {
+      const newPathLengths = newPaths.nodes().map((node) => node.getTotalLength());
+      newPaths.attr("d", (d, i) => {
+        const dataIndex = flowMap.bundleData.paths.findIndex(
+          (p2) => p2.id === d.id
+        );
+        return line(finalSegments[dataIndex]);
+      }).attr(
+        "stroke-dasharray",
+        (d, i) => `${newPathLengths[i]} ${newPathLengths[i]}`
+      ).attr("stroke-dashoffset", (d, i) => newPathLengths[i]).transition().duration(CONFIG.pathAnimationDuration).attr("stroke-dashoffset", 0).on("end", function() {
+        d3.select(this).attr("stroke-dasharray", "none");
+      });
+      newPaths.each(function(d) {
+        const dataIndex = flowMap.bundleData.paths.findIndex(
+          (p2) => p2.id === d.id
+        );
+        hoverAreas.filter((hd) => hd.id === d.id).attr("d", line(finalSegments[dataIndex]));
+      });
+    }
+    if (!existingPaths.empty()) {
+      let animate = function() {
+        const elapsed = Date.now() - startTime;
+        const t = Math.min(elapsed / duration, 1);
+        const eased = d3.easeCubicInOut(t);
+        existingPaths.each(function(d) {
+          const dataIndex = flowMap.bundleData.paths.findIndex(
+            (p2) => p2.id === d.id
+          );
+          const initial = pathInitialSegments.get(d.id);
+          const final = finalSegments[dataIndex];
+          const interpolatedSegments = initial.map((s, j) => ({
+            x: s.x + (final[j].x - s.x) * eased,
+            y: s.y + (final[j].y - s.y) * eased
+          }));
+          d3.select(this).attr("d", line(interpolatedSegments));
+          hoverAreas.filter((hd) => hd.id === d.id).attr("d", line(interpolatedSegments));
+        });
+        if (t < 1) {
+          requestAnimationFrame(animate);
+        }
+      };
+      const duration = CONFIG.pathAnimationDuration;
+      const startTime = Date.now();
+      animate();
+    }
   });
   flowMap.forceLayout.nodes(flowMap.bundleData.nodes).force("link").links(flowMap.bundleData.links);
 }
@@ -8669,16 +8746,36 @@ function createLegend() {
     maxValue * 0.75,
     maxValue
   ].filter((v) => v > 0);
-  const legendX = 15;
-  const legendY = flowMap.svg.attr("height") - 70;
-  const legendHeight = legendValues.length * 12 + 20;
-  legendGroup.append("rect").attr("x", legendX - 5).attr("y", legendY - 15).attr("width", 100).attr("height", legendHeight).attr("fill", COLORS.legendBackground).attr("stroke", COLORS.node).attr("stroke-width", 0.5).attr("rx", 2);
-  legendGroup.append("text").attr("x", legendX).attr("y", legendY - 5).style("font-size", "5px").style("font-family", STYLES.fontFamily).style("font-weight", "bold").style("fill", COLORS.text).text("Flow Value");
+  const legendX = 20;
+  const svgHeight = parseFloat(flowMap.svg.attr("height"));
+  const legendHeight = legendValues.length * 20 + 25;
+  const legendY = svgHeight - legendHeight - 10;
+  legendGroup.append("text").attr("x", legendX + 3).attr("y", legendY).style("font-size", "10px").style("font-family", STYLES.fontFamily).style("font-weight", "bold").style("fill", COLORS.text).text("LEGEND");
+  const textElements = [];
   legendValues.forEach((value2, i) => {
-    const y = legendY + 5 + i * 12;
-    legendGroup.append("line").attr("x1", legendX).attr("y1", y).attr("x2", legendX + 20).attr("y2", y).attr("stroke", COLORS.path).attr("stroke-width", SCALES.pathThickness(value2));
-    legendGroup.append("text").attr("x", legendX + 25).attr("y", y + 1.5).style("font-size", "4px").style("font-family", STYLES.fontFamily).style("fill", COLORS.text).text(Math.round(value2).toLocaleString());
+    const y = legendY + 15 + i * 20;
+    legendGroup.append("line").attr("x1", legendX + 3).attr("y1", y).attr("x2", legendX + 35).attr("y2", y).attr("stroke", COLORS.path).attr("stroke-width", SCALES.pathThickness(value2));
+    const formattedValue = formatValueWithUnit(
+      value2,
+      flowMap.unitSymbol,
+      flowMap.unitLocation
+    );
+    const textElement = legendGroup.append("text").attr("x", legendX + 42).attr("y", y + 1.5).style("font-size", "8px").style("font-family", STYLES.fontFamily).style("fill", COLORS.text).text(formattedValue);
+    textElements.push(textElement);
   });
+  const legendBBox = legendGroup.node().getBBox();
+  const legendWidth = legendBBox.width + 10;
+  legendGroup.insert("rect", ":first-child").attr("x", legendX - 5).attr("y", legendY - 15).attr("width", legendWidth).attr("height", legendHeight).attr("fill", COLORS.legendBackground).attr("stroke", COLORS.node).attr("stroke-width", 0.5).attr("rx", 2);
+}
+function formatValueWithUnit(value2, unitSymbol, unitLocation) {
+  const formattedNumber = Math.round(value2).toLocaleString();
+  if (!unitSymbol) return formattedNumber;
+  if (unitLocation === "before") {
+    return `${unitSymbol}${formattedNumber}`;
+  } else if (unitLocation === "after") {
+    return `${formattedNumber} ${unitSymbol}`;
+  }
+  return formattedNumber;
 }
 function createMap() {
   const shadowRoot = document.querySelector("flow-map").shadowRoot;
@@ -8694,6 +8791,7 @@ function createMap() {
     const newWidth = flowMapDiv.clientWidth;
     const newHeight = window.innerHeight * 0.6;
     flowMap.svg.style("width", newWidth).attr("height", newHeight);
+    createLegend();
   });
 }
 function setupSVG(shadowRoot, width, height) {
@@ -8762,7 +8860,7 @@ function focusRootById(root3, element_id) {
 
 // build/dev/javascript/viz/components/flow_map.mjs
 var Model = class extends CustomType {
-  constructor(form3, current_form, actions, next_node_id, next_path_id, nodes2, paths, selected_coords, selected_node) {
+  constructor(form3, current_form, actions, next_node_id, next_path_id, nodes2, paths, units, selected_coords, selected_node) {
     super();
     this.form = form3;
     this.current_form = current_form;
@@ -8771,6 +8869,7 @@ var Model = class extends CustomType {
     this.next_path_id = next_path_id;
     this.nodes = nodes2;
     this.paths = paths;
+    this.units = units;
     this.selected_coords = selected_coords;
     this.selected_node = selected_node;
   }
@@ -8799,6 +8898,8 @@ var NodeFormSubmit = class extends CustomType {
     super();
     this[0] = $0;
   }
+};
+var StartUnitForm = class extends CustomType {
 };
 var StartPathForm = class extends CustomType {
   constructor(path_id) {
@@ -8834,6 +8935,12 @@ var DeletePath = class extends CustomType {
   constructor(path_id) {
     super();
     this.path_id = path_id;
+  }
+};
+var UnitFormSubmit = class extends CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
   }
 };
 var Undo = class extends CustomType {
@@ -8880,6 +8987,13 @@ var LocationResult = class extends CustomType {
     this.name = name2;
   }
 };
+var Unit = class extends CustomType {
+  constructor(unit_symbol, unit_location) {
+    super();
+    this.unit_symbol = unit_symbol;
+    this.unit_location = unit_location;
+  }
+};
 var NewNodeForm = class extends CustomType {
 };
 var EditNodeForm = class extends CustomType {
@@ -8895,6 +9009,8 @@ var EditPathForm = class extends CustomType {
     super();
     this.node_id = node_id;
   }
+};
+var UnitForm = class extends CustomType {
 };
 var NoForm = class extends CustomType {
 };
@@ -8912,6 +9028,13 @@ var PathFormData = class extends CustomType {
     this.origin_node_id = origin_node_id;
     this.destination_node_id = destination_node_id;
     this.value = value2;
+  }
+};
+var UnitFormData = class extends CustomType {
+  constructor(unit_symbol, unit_location) {
+    super();
+    this.unit_symbol = unit_symbol;
+    this.unit_location = unit_location;
   }
 };
 var EmptyForm = class extends CustomType {
@@ -8955,6 +9078,12 @@ var RemovePath = class extends CustomType {
     this.path = path2;
   }
 };
+var ChangeUnit = class extends CustomType {
+  constructor(original_unit) {
+    super();
+    this.original_unit = original_unit;
+  }
+};
 var GenerateMap = class extends CustomType {
   constructor(previous_model) {
     super();
@@ -8986,6 +9115,7 @@ function create_new_node(model, lat, lon, node_label) {
     model.next_path_id,
     prepend(node, model.nodes),
     model.paths,
+    model.units,
     new None(),
     model.selected_node
   );
@@ -9015,6 +9145,7 @@ function update_existing_node(model, node_id, lat, lon, node_label) {
         model.next_path_id,
         updated_nodes,
         model.paths,
+        model.units,
         new None(),
         model.selected_node
       );
@@ -9062,6 +9193,7 @@ function create_new_path(model, origin_node_id, destination_node_id, value2) {
     model.next_path_id + 1,
     model.nodes,
     prepend(path2, model.paths),
+    model.units,
     model.selected_coords,
     model.selected_node
   );
@@ -9109,6 +9241,7 @@ function update_existing_path(model, path_id, origin_node_id, destination_node_i
         model.next_path_id,
         model.nodes,
         updated_paths,
+        model.units,
         new None(),
         model.selected_node
       );
@@ -9203,6 +9336,21 @@ function decode_location_result() {
     }
   );
 }
+function unit_decoder() {
+  return field(
+    "unit_symbol",
+    string2,
+    (unit_symbol) => {
+      return field(
+        "unit_location",
+        string2,
+        (unit_location) => {
+          return success(new Unit(unit_symbol, unit_location));
+        }
+      );
+    }
+  );
+}
 function empty_form() {
   let _pipe = success2(new EmptyForm());
   return new$8(_pipe);
@@ -9216,6 +9364,7 @@ function empty_model() {
     1,
     toList([]),
     toList([]),
+    new Unit("", ""),
     new None(),
     new None()
   );
@@ -9237,18 +9386,25 @@ function model_decoder() {
                 "next_path_id",
                 int2,
                 (next_path_id) => {
-                  return success(
-                    new Model(
-                      empty_form(),
-                      new NoForm(),
-                      toList([]),
-                      next_node_id,
-                      next_path_id,
-                      nodes2,
-                      paths,
-                      new None(),
-                      new None()
-                    )
+                  return field(
+                    "units",
+                    unit_decoder(),
+                    (units) => {
+                      return success(
+                        new Model(
+                          empty_form(),
+                          new NoForm(),
+                          toList([]),
+                          next_node_id,
+                          next_path_id,
+                          nodes2,
+                          paths,
+                          units,
+                          new None(),
+                          new None()
+                        )
+                      );
+                    }
                   );
                 }
               );
@@ -9268,6 +9424,7 @@ function reset_form(model) {
     model.next_path_id,
     model.nodes,
     model.paths,
+    model.units,
     model.selected_coords,
     model.selected_node
   );
@@ -9306,7 +9463,7 @@ function edit_node_form(node) {
     ])
   );
 }
-function new_path_form() {
+function new_path_form(model) {
   return new$8(
     field2(
       "origin_node_id",
@@ -9323,12 +9480,32 @@ function new_path_form() {
             return new Ok(id2);
           }
         };
+        let check_if_combination_exists = (id2) => {
+          let $ = model.current_form;
+          let $1 = (() => {
+            let _pipe = filter(
+              model.paths,
+              (path2) => {
+                return path2.origin_node_id === origin_node_id && path2.destination_node_id === id2;
+              }
+            );
+            return length(_pipe);
+          })();
+          if ($ instanceof EditPathForm) {
+            return new Ok(id2);
+          } else if ($1 === 0) {
+            return new Ok(id2);
+          } else {
+            return new Error("origin and destination combination exists");
+          }
+        };
         return field2(
           "destination_node_id",
           (() => {
             let _pipe = parse_string;
             let _pipe$1 = check_not_empty(_pipe);
-            return check(_pipe$1, check_if_is_origin);
+            let _pipe$2 = check(_pipe$1, check_if_is_origin);
+            return check(_pipe$2, check_if_combination_exists);
           })(),
           (destination_node_id) => {
             return field2(
@@ -9346,14 +9523,52 @@ function new_path_form() {
     )
   );
 }
-function edit_path_form(path2) {
-  let _pipe = new_path_form();
+function edit_path_form(model, path2) {
+  let _pipe = new_path_form(model);
   return set_values(
     _pipe,
     toList([
       ["origin_node_id", path2.origin_node_id],
       ["destination_node_id", path2.destination_node_id],
       ["value", float_to_string(path2.value)]
+    ])
+  );
+}
+function new_unit_form(model) {
+  let _pipe = new$8(
+    field2(
+      "unit_symbol",
+      parse_string,
+      (unit_symbol) => {
+        let not_empty_if_symbol_exists = (unit_location) => {
+          if (unit_location === "") {
+            if (unit_symbol === "") {
+              return new Ok("");
+            } else {
+              return new Error("unit location must be specified");
+            }
+          } else {
+            return new Ok(unit_location);
+          }
+        };
+        return field2(
+          "unit_location",
+          (() => {
+            let _pipe2 = parse_string;
+            return check(_pipe2, not_empty_if_symbol_exists);
+          })(),
+          (unit_location) => {
+            return success2(new UnitFormData(unit_symbol, unit_location));
+          }
+        );
+      }
+    )
+  );
+  return set_values(
+    _pipe,
+    toList([
+      ["unit_symbol", model.units.unit_symbol],
+      ["unit_location", model.units.unit_location]
     ])
   );
 }
@@ -9550,6 +9765,70 @@ function render_node_select_field(form3, name2, label2, nodes2) {
     )
   );
 }
+function render_unit_location_select_field(form3) {
+  let errors = field_error_messages(form3, "unit_location");
+  return div(
+    toList([]),
+    prepend(
+      div(
+        toList([class$("py-2")]),
+        toList([
+          label(
+            toList([for$("unit_location")]),
+            toList([text2("Unit Location: ")])
+          )
+        ])
+      ),
+      prepend(
+        select(
+          toList([
+            class$("w-full bg-gray-200 text-gray-700 rounded-sm px-2 py-1"),
+            id("unit_location"),
+            name("unit_location")
+          ]),
+          toList([
+            option(
+              toList([
+                value(""),
+                selected(
+                  field_value(form3, "unit_location") === ""
+                )
+              ]),
+              "Select unit location..."
+            ),
+            option(
+              toList([
+                value("before"),
+                selected(
+                  field_value(form3, "unit_location") === "before"
+                )
+              ]),
+              "Before number"
+            ),
+            option(
+              toList([
+                value("after"),
+                selected(
+                  field_value(form3, "unit_location") === "after"
+                )
+              ]),
+              "After number"
+            )
+          ])
+        ),
+        map(
+          errors,
+          (error_message) => {
+            return p(
+              toList([class$("mt-0.5 text-xs text-red-300")]),
+              toList([text3(error_message)])
+            );
+          }
+        )
+      )
+    )
+  );
+}
 function render_submit_button(current_form) {
   let _block;
   if (current_form instanceof NewNodeForm) {
@@ -9560,6 +9839,8 @@ function render_submit_button(current_form) {
     _block = "Add Path";
   } else if (current_form instanceof EditPathForm) {
     _block = "Edit Path";
+  } else if (current_form instanceof UnitForm) {
+    _block = "Submit";
   } else {
     _block = "Submit";
   }
@@ -9644,6 +9925,27 @@ function render_path_form(form3, nodes2, current_form) {
     ])
   );
 }
+function render_unit_form(form3, current_form) {
+  let handle_submit = (values3) => {
+    let _pipe = form3;
+    let _pipe$1 = add_values(_pipe, values3);
+    let _pipe$2 = run2(_pipe$1);
+    return new UnitFormSubmit(_pipe$2);
+  };
+  return div(
+    toList([class$("flex-1 py-2")]),
+    toList([
+      form2(
+        toList([on_submit(handle_submit)]),
+        toList([
+          render_input_field(form3, "unit_symbol", "Unit Symbol"),
+          render_unit_location_select_field(form3),
+          render_submit_button(current_form)
+        ])
+      )
+    ])
+  );
+}
 function render_form(model) {
   let $ = model.current_form;
   if ($ instanceof NewNodeForm) {
@@ -9654,6 +9956,8 @@ function render_form(model) {
     return render_path_form(model.form, model.nodes, model.current_form);
   } else if ($ instanceof EditPathForm) {
     return render_path_form(model.form, model.nodes, model.current_form);
+  } else if ($ instanceof UnitForm) {
+    return render_unit_form(model.form, model.current_form);
   } else {
     return none2();
   }
@@ -9880,6 +10184,37 @@ function render_controls(model) {
       button(
         toList([
           class$(
+            "bg-amber-600 hover:bg-amber-400 px-3 py-2 rounded-sm cursor-pointer ml-2"
+          ),
+          title("Set Units"),
+          on_click(new StartUnitForm())
+        ]),
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M14.121 7.629A3 3 0 0 0 9.017 9.43c-.023.212-.002.425.028.636l.506 3.541a4.5 4.5 0 0 1-.43 2.65L9 16.5l1.539-.513a2.25 2.25 0 0 1 1.422 0l.655.218a2.25 2.25 0 0 0 1.718-.122L15 15.75M8.25 12H12m9 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                  )
+                ])
+              )
+            ])
+          )
+        ])
+      ),
+      button(
+        toList([
+          class$(
             "bg-purple-600 hover:bg-purple-400 px-3 py-2 rounded-sm cursor-pointer ml-2"
           ),
           title("Generate Random Map"),
@@ -9963,7 +10298,7 @@ function view(model) {
         toList([
           h1(
             toList([class$("text-4xl font-extrabold mb-6")]),
-            toList([text2("Flow map")])
+            toList([text2("Trade Flow Map")])
           ),
           div(
             toList([
@@ -10145,6 +10480,7 @@ function generate_random_map() {
         return path2.path_id !== "";
       });
     })(),
+    new Unit("\xA3", "before"),
     _record.selected_coords,
     _record.selected_node
   );
@@ -10212,6 +10548,7 @@ function update2(model, message) {
       model.next_path_id,
       model.nodes,
       model.paths,
+      model.units,
       new Some([lat, lon]),
       model.selected_node
     );
@@ -10237,6 +10574,7 @@ function update2(model, message) {
         updated_model.next_path_id,
         updated_model.nodes,
         updated_model.paths,
+        updated_model.units,
         updated_model.selected_coords,
         updated_model.selected_node
       );
@@ -10262,6 +10600,7 @@ function update2(model, message) {
         updated_model.next_path_id,
         updated_model.nodes,
         updated_model.paths,
+        updated_model.units,
         updated_model.selected_coords,
         updated_model.selected_node
       );
@@ -10314,6 +10653,7 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           new None()
         ),
@@ -10361,6 +10701,7 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           new None()
         ),
@@ -10376,6 +10717,7 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           new Some(node_id)
         ),
@@ -10406,6 +10748,7 @@ function update2(model, message) {
           updated_model.next_path_id,
           updated_model.nodes,
           updated_model.paths,
+          updated_model.units,
           updated_model.selected_coords,
           new Some(node.node_id)
         );
@@ -10421,6 +10764,7 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           model.selected_node
         );
@@ -10445,6 +10789,7 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           new Some(node.node_id)
         );
@@ -10486,6 +10831,7 @@ function update2(model, message) {
                   updated_model.next_path_id,
                   updated_model.nodes,
                   updated_model.paths,
+                  updated_model.units,
                   updated_model.selected_coords,
                   new Some(node_id)
                 ),
@@ -10513,11 +10859,28 @@ function update2(model, message) {
         model.next_path_id,
         model.nodes,
         model.paths,
+        model.units,
         model.selected_coords,
         model.selected_node
       );
       return [updated_model, none()];
     }
+  } else if (message instanceof StartUnitForm) {
+    return [
+      new Model(
+        new_unit_form(model),
+        new UnitForm(),
+        model.actions,
+        model.next_node_id,
+        model.next_path_id,
+        model.nodes,
+        model.paths,
+        model.units,
+        model.selected_coords,
+        model.selected_node
+      ),
+      none()
+    ];
   } else if (message instanceof StartPathForm) {
     let $ = message.path_id;
     if ($ === "") {
@@ -10525,7 +10888,7 @@ function update2(model, message) {
       if ($1 instanceof Some) {
         let node_id = $1[0];
         let _block;
-        let _pipe = new_path_form();
+        let _pipe = new_path_form(model);
         _block = set_values(_pipe, toList([["origin_node_id", node_id]]));
         let path_with_origin_node_id = _block;
         let updated_model = new Model(
@@ -10536,19 +10899,21 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           model.selected_node
         );
         return [updated_model, none()];
       } else {
         let updated_model = new Model(
-          new_path_form(),
+          new_path_form(model),
           new NewPathForm(),
           model.actions,
           model.next_node_id,
           model.next_path_id,
           model.nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           model.selected_node
         );
@@ -10566,13 +10931,14 @@ function update2(model, message) {
         return [model, none()];
       } else {
         let updated_model = new Model(
-          edit_path_form(path2),
+          edit_path_form(model, path2),
           new EditPathForm(path2.path_id),
           model.actions,
           model.next_node_id,
           model.next_path_id,
           model.nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           model.selected_node
         );
@@ -10635,6 +11001,7 @@ function update2(model, message) {
         model.next_path_id,
         model.nodes,
         model.paths,
+        model.units,
         model.selected_coords,
         model.selected_node
       );
@@ -10694,6 +11061,7 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           model.paths,
+          model.units,
           new Some([result.lat, result.lon]),
           model.selected_node
         ),
@@ -10728,6 +11096,7 @@ function update2(model, message) {
         model.next_path_id,
         updated_nodes,
         updated_paths,
+        model.units,
         model.selected_coords,
         model.selected_node
       );
@@ -10761,6 +11130,7 @@ function update2(model, message) {
         model.next_path_id,
         model.nodes,
         updated_paths,
+        model.units,
         model.selected_coords,
         model.selected_node
       );
@@ -10768,6 +11138,49 @@ function update2(model, message) {
       return [updated_model, none()];
     } else {
       return [model, none()];
+    }
+  } else if (message instanceof UnitFormSubmit) {
+    let $ = message[0];
+    if ($ instanceof Ok) {
+      let $1 = $[0];
+      if ($1 instanceof UnitFormData) {
+        let unit_symbol = $1.unit_symbol;
+        let unit_location = $1.unit_location;
+        let _block;
+        let _pipe = new Model(
+          model.form,
+          model.current_form,
+          prepend(new ChangeUnit(model.units), model.actions),
+          model.next_node_id,
+          model.next_path_id,
+          model.nodes,
+          model.paths,
+          new Unit(unit_symbol, unit_location),
+          model.selected_coords,
+          model.selected_node
+        );
+        _block = reset_form(_pipe);
+        let updated_model = _block;
+        setUnits(unit_symbol, unit_location);
+        return [updated_model, none()];
+      } else {
+        return [model, none()];
+      }
+    } else {
+      let form3 = $[0];
+      let updated_model = new Model(
+        form3,
+        model.current_form,
+        model.actions,
+        model.next_node_id,
+        model.next_path_id,
+        model.nodes,
+        model.paths,
+        model.units,
+        model.selected_coords,
+        model.selected_node
+      );
+      return [updated_model, none()];
     }
   } else if (message instanceof Undo) {
     let $ = model.actions;
@@ -10793,6 +11206,7 @@ function update2(model, message) {
           model.next_path_id,
           updated_nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           model.selected_node
         );
@@ -10823,6 +11237,7 @@ function update2(model, message) {
           model.next_path_id,
           updated_nodes,
           model.paths,
+          model.units,
           model.selected_coords,
           model.selected_node
         );
@@ -10848,6 +11263,7 @@ function update2(model, message) {
           model.next_path_id,
           prepend(node, model.nodes),
           append(deleted_paths, model.paths),
+          model.units,
           model.selected_coords,
           model.selected_node
         );
@@ -10884,6 +11300,7 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           updated_paths,
+          model.units,
           model.selected_coords,
           model.selected_node
         );
@@ -10914,6 +11331,7 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           updated_paths,
+          model.units,
           model.selected_coords,
           model.selected_node
         );
@@ -10938,6 +11356,7 @@ function update2(model, message) {
           model.next_path_id,
           model.nodes,
           prepend(path2, model.paths),
+          model.units,
           model.selected_coords,
           model.selected_node
         );
@@ -10950,11 +11369,34 @@ function update2(model, message) {
           path2.value
         );
         return [updated_model, none()];
+      } else if ($1 instanceof ChangeUnit) {
+        let original_unit = $1.original_unit;
+        setUnits(original_unit.unit_symbol, original_unit.unit_location);
+        return [
+          new Model(
+            model.form,
+            model.current_form,
+            model.actions,
+            model.next_node_id,
+            model.next_path_id,
+            model.nodes,
+            model.paths,
+            original_unit,
+            model.selected_coords,
+            model.selected_node
+          ),
+          none()
+        ];
       } else if ($1 instanceof GenerateMap) {
         let previous_model = $1.previous_model;
         let recreation_effect = from(
           (_) => {
-            return restoreD3State(previous_model.nodes, previous_model.paths);
+            return restoreD3State(
+              previous_model.nodes,
+              previous_model.paths,
+              previous_model.units.unit_symbol,
+              previous_model.units.unit_location
+            );
           }
         );
         return [previous_model, recreation_effect];
@@ -10962,7 +11404,12 @@ function update2(model, message) {
         let previous_model = $1.previous_model;
         let recreation_effect = from(
           (_) => {
-            return restoreD3State(previous_model.nodes, previous_model.paths);
+            return restoreD3State(
+              previous_model.nodes,
+              previous_model.paths,
+              previous_model.units.unit_symbol,
+              previous_model.units.unit_location
+            );
           }
         );
         return [previous_model, recreation_effect];
@@ -10978,6 +11425,7 @@ function update2(model, message) {
       model.next_path_id,
       model.nodes,
       model.paths,
+      model.units,
       model.selected_coords,
       new None()
     );
@@ -10996,7 +11444,12 @@ function update2(model, message) {
       let imported_model = $[0];
       let recreation_effect = from(
         (_) => {
-          return restoreD3State(imported_model.nodes, imported_model.paths);
+          return restoreD3State(
+            imported_model.nodes,
+            imported_model.paths,
+            imported_model.units.unit_symbol,
+            imported_model.units.unit_location
+          );
         }
       );
       return [imported_model, recreation_effect];
@@ -11017,13 +11470,19 @@ function update2(model, message) {
       _record.next_path_id,
       _record.nodes,
       _record.paths,
+      model.units,
       _record.selected_coords,
       _record.selected_node
     );
     let updated_model = _block;
     let recreation_effect = from(
       (_) => {
-        return restoreD3State(toList([]), toList([]));
+        return restoreD3State(
+          toList([]),
+          toList([]),
+          model.units.unit_symbol,
+          model.units.unit_location
+        );
       }
     );
     return [updated_model, recreation_effect];
@@ -11031,7 +11490,12 @@ function update2(model, message) {
     let random_model = generate_random_map();
     let recreation_effect = from(
       (_) => {
-        return restoreD3State(random_model.nodes, random_model.paths);
+        return restoreD3State(
+          random_model.nodes,
+          random_model.paths,
+          random_model.units.unit_symbol,
+          random_model.units.unit_location
+        );
       }
     );
     return [
@@ -11043,6 +11507,7 @@ function update2(model, message) {
         random_model.next_path_id,
         random_model.nodes,
         random_model.paths,
+        random_model.units,
         random_model.selected_coords,
         random_model.selected_node
       ),
@@ -11072,6 +11537,10 @@ var ENTITY_COLOURS = {
   Decomposer: {
     fill: "#fef3c7",
     stroke: "#d97706"
+  },
+  "": {
+    fill: "#e4e4e7",
+    stroke: "#71717a"
   }
 };
 var FLOW_COLORS = {
@@ -11096,7 +11565,18 @@ var CONFIG2 = {
   itemsPerActivityColumn: 3,
   itemsPerMaterialColumn: 5,
   entityMargin: 40,
-  flowHoverWidth: 8
+  flowHoverWidth: 8,
+  initialScale: 0.5
+};
+var STYLES2 = {
+  fontFamily: "Arial, sans-serif",
+  fontSize: "14px",
+  smallFontSize: "13px",
+  badgeFontSize: "12px",
+  legendFontSize: "11px",
+  legendSmallFontSize: "9px",
+  legendTinyFontSize: "8px",
+  legendMicroFontSize: "7px"
 };
 var resourcePooling = {
   svg: null,
@@ -11176,6 +11656,23 @@ function deleteEntity(entityId) {
     nodes.splice(nodeIndex, 1);
     updateSimulation();
   }
+}
+function setEntityPosition(entityId, x, y) {
+  if (!resourcePooling.g) return;
+  const node = nodes.find((n) => n.id === entityId);
+  if (node) {
+    node.x = x;
+    node.y = y;
+    node.fx = x;
+    node.fy = y;
+    const entityElement = resourcePooling.g.select(`#${entityId}`);
+    entityElement.attr("transform", `translate(${x}, ${y})`);
+    setTimeout(() => {
+      node.fx = null;
+      node.fy = null;
+    }, 100);
+  }
+  updateAllFlowPaths();
 }
 function updateMaterial(name2, materialId) {
   if (!resourcePooling.g) return;
@@ -11287,14 +11784,53 @@ function setupFileImport2(dispatch) {
     });
   });
 }
-function restoreD3StateAfterImport(entities, materials, flows) {
-  if (!window.pendingD3State) return;
+function centreViewOnNodes() {
+  if (!resourcePooling.svg || nodes.length === 0) return;
+  let sumX = 0, sumY = 0;
+  nodes.forEach((node) => {
+    sumX += node.x + (node.width || 150) / 2;
+    sumY += node.y + (node.height || 100) / 2;
+  });
+  const centroidX = sumX / nodes.length;
+  const centroidY = sumY / nodes.length;
+  const svgNode = resourcePooling.svg.node();
+  const svgWidth = svgNode.clientWidth;
+  const svgHeight = svgNode.clientHeight;
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  nodes.forEach((node) => {
+    minX = Math.min(minX, node.x);
+    maxX = Math.max(maxX, node.x + (node.width || 150));
+    minY = Math.min(minY, node.y);
+    maxY = Math.max(maxY, node.y + (node.height || 100));
+  });
+  const bboxWidth = maxX - minX;
+  const bboxHeight = maxY - minY;
+  const padding = 25;
+  const legendWidth = 120 + 30;
+  const availableWidth = svgWidth - legendWidth - padding * 2;
+  const availableHeight = svgHeight - padding * 2;
+  const scaleX = availableWidth / bboxWidth;
+  const scaleY = availableHeight / bboxHeight;
+  const scale = Math.min(scaleX, scaleY, 1);
+  const centerX = legendWidth + availableWidth / 2;
+  const centerY = svgHeight / 2;
+  const transform = d3.zoomIdentity.translate(centerX, centerY).scale(scale).translate(-centroidX, -centroidY);
+  resourcePooling.g.transition().duration(500).attr("transform", transform).on("end", () => {
+    resourcePooling.svg.call(d3.zoom().transform, transform);
+  });
+}
+function restoreD3State2(entities, materials, flows) {
   const d3State = window.pendingD3State;
   clearResourcePooling();
   entities.toArray().forEach((entity) => {
-    const nodeState = d3State.nodes.find((n) => n.id === entity.entity_id);
-    if (nodeState) {
-      createEntity(entity, materials, nodeState.x, nodeState.y);
+    if (d3State) {
+      const nodeState = d3State.nodes.find((n) => n.id === entity.entity_id);
+      if (nodeState) {
+        createEntity(entity, materials, nodeState.x, nodeState.y);
+      } else {
+        createEntity(entity, materials);
+      }
     } else {
       createEntity(entity, materials);
     }
@@ -11302,7 +11838,94 @@ function restoreD3StateAfterImport(entities, materials, flows) {
   flows.toArray().forEach((flow) => {
     createFlow(flow);
   });
-  delete window.pendingD3State;
+  if (nodes.length > 0) {
+    centreViewOnNodes();
+  }
+  if (window.pendingD3State) {
+    delete window.pendingD3State;
+  }
+}
+function exportMapAsPNG2() {
+  if (!resourcePooling.svg || !resourcePooling.initialised) {
+    console.warn("Diagram not ready for export");
+    return null;
+  }
+  const svgNode = resourcePooling.svg.node();
+  const clonedSvg = svgNode.cloneNode(true);
+  const currentTransform = resourcePooling.g.attr("transform");
+  const clonedGroup = clonedSvg.querySelector("g");
+  if (clonedGroup && currentTransform) {
+    clonedGroup.setAttribute("transform", currentTransform);
+  }
+  const svgWidth = svgNode.clientWidth;
+  const svgHeight = svgNode.clientHeight;
+  clonedSvg.setAttribute("viewBox", `0 0 ${svgWidth} ${svgHeight}`);
+  clonedSvg.setAttribute("width", svgWidth);
+  clonedSvg.setAttribute("height", svgHeight);
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", 0);
+  rect.setAttribute("y", 0);
+  rect.setAttribute("width", svgWidth);
+  rect.setAttribute("height", svgHeight);
+  rect.setAttribute("fill", "white");
+  clonedGroup.insertBefore(rect, clonedGroup.firstChild);
+  let defs = clonedSvg.querySelector("defs");
+  if (!defs) {
+    defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    clonedSvg.insertBefore(defs, clonedSvg.firstChild);
+  }
+  const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+  style.textContent = `
+    text {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+  `;
+  defs.appendChild(style);
+  clonedSvg.style.cursor = "default";
+  if (!clonedSvg.getAttribute("xmlns")) {
+    clonedSvg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  }
+  const serializer = new XMLSerializer();
+  const svgString = serializer.serializeToString(clonedSvg);
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const scale = 15;
+  canvas.width = svgWidth * scale;
+  canvas.height = svgHeight * scale;
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const img = new Image();
+  const svgBlob = new Blob([svgString], {
+    type: "image/svg+xml;charset=utf-8"
+  });
+  const url = URL.createObjectURL(svgBlob);
+  img.onload = function() {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(function(blob) {
+      const pngUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = pngUrl;
+      link.download = `resource-pooling-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(pngUrl);
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  };
+  img.src = url;
+  return null;
+}
+function getEntityPosition(entityId) {
+  if (!resourcePooling.g) return null;
+  const node = nodes.find((n) => n.id === entityId);
+  if (!node) return null;
+  return {
+    x: node.x || 0,
+    y: node.y || 0,
+    width: node.width || 150,
+    height: node.height || 100
+  };
 }
 function createEntityGroup(entityId, x, y) {
   return resourcePooling.g.select(".entities-group").append("g").attr("class", "entity").attr("id", entityId).attr("transform", `translate(${x}, ${y})`);
@@ -11341,7 +11964,7 @@ function buildEntityContent(entityGroup, entity, valueActivities, entityMaterial
   return dimensions;
 }
 function createEntityTitle(entityGroup, name2) {
-  return entityGroup.append("text").attr("x", CONFIG2.nameXPadding).attr("y", CONFIG2.nameHeight).attr("text-anchor", "left").style("font-size", CONFIG2.nameFontSize).style("font-weight", "bold").style("fill", "#e5e7eb").text(name2);
+  return entityGroup.append("text").attr("x", CONFIG2.nameXPadding).attr("y", CONFIG2.nameHeight).attr("text-anchor", "left").style("font-family", STYLES2.fontFamily).style("font-size", CONFIG2.nameFontSize).style("font-weight", "bold").style("fill", "#e5e7eb").text(name2);
 }
 function calculateTitleWidth(titleText) {
   const titleBBox = titleText.node().getBBox();
@@ -11389,10 +12012,10 @@ function createActivityBadge(entityGroup, activity, xOffset, rowInColumn) {
   );
 }
 function styleActivityBadge(badge, activity) {
-  const text4 = badge.append("text").attr("x", 0).attr("y", CONFIG2.badgeHeight / 2 + 4).style("font-size", "12px").style("fill", "#000000").text(activity);
+  const text4 = badge.append("text").attr("x", 0).attr("y", CONFIG2.badgeHeight / 2 + 4).style("font-family", STYLES2.fontFamily).style("font-size", "12px").style("fill", "#000000").text(activity);
   const bbox = text4.node().getBBox();
   const badgeWidth = bbox.width + 16;
-  badge.insert("rect", "text").attr("width", badgeWidth).attr("height", CONFIG2.badgeHeight).attr("rx", 10).style("fill", "#ffffff").style("fill-opacity", "0.7").style("stroke", "#000000").style("stroke-width", 1);
+  badge.insert("rect", "text").attr("width", badgeWidth).attr("height", CONFIG2.badgeHeight).attr("rx", 10).style("font-family", STYLES2.fontFamily).style("fill", "#ffffff").style("fill-opacity", "0.7").style("stroke", "#000000").style("stroke-width", 1);
   text4.attr("x", badgeWidth / 2).attr("text-anchor", "middle");
   return badgeWidth;
 }
@@ -11444,7 +12067,7 @@ function createMaterialItem(entityGroup, material, xOffset, rowInColumn) {
     `translate(${xOffset}, ${CONFIG2.nameHeight + CONFIG2.padding + 20 + rowInColumn * CONFIG2.materialSpacing})`
   );
   materialGroup.append("circle").attr("cx", 0).attr("cy", 10).attr("r", 2).style("fill", "#374151");
-  materialGroup.append("text").attr("x", 10).attr("y", 12).style("font-size", "13px").style("fill", "#374151").text(material.name);
+  materialGroup.append("text").attr("x", 10).attr("y", 12).style("font-family", STYLES2.fontFamily).style("font-size", "13px").style("fill", "#374151").text(material.name);
   return materialGroup;
 }
 function getMaterialWidth(materialGroup) {
@@ -11728,16 +12351,57 @@ function updateSimulation() {
   }
 }
 function initForceSimulation() {
-  forceSimulation = d3.forceSimulation().force("charge", d3.forceManyBody().strength(-50)).force(
+  forceSimulation = d3.forceSimulation().force(
     "link",
-    d3.forceLink().id((d) => d.id).distance(100).strength(0.1)
-  ).force(
-    "collision",
-    d3.forceCollide().radius((d) => {
-      return Math.sqrt(d.width * d.width + d.height * d.height) / 2 + 10;
-    })
-  ).on("tick", updateEntityPositions);
+    d3.forceLink().id((d) => d.id).distance(150).strength(0.01)
+  ).force("rectangleCollide", rectangleCollide()).on("tick", updateEntityPositions);
   return forceSimulation;
+}
+function rectangleCollide() {
+  let nodes2;
+  let strength = 1;
+  const padding = 30;
+  function force(alpha) {
+    const k = alpha * strength;
+    for (let i = 0; i < nodes2.length; i++) {
+      const nodeA = nodes2[i];
+      const widthA = nodeA.width || 150;
+      const heightA = nodeA.height || 100;
+      const centerAx = nodeA.x + widthA / 2;
+      const centerAy = nodeA.y + heightA / 2;
+      for (let j = i + 1; j < nodes2.length; j++) {
+        const nodeB = nodes2[j];
+        const widthB = nodeB.width || 150;
+        const heightB = nodeB.height || 100;
+        const centerBx = nodeB.x + widthB / 2;
+        const centerBy = nodeB.y + heightB / 2;
+        const dx = centerBx - centerAx;
+        const dy = centerBy - centerAy;
+        const overlapX = widthA / 2 + padding + (widthB / 2 + padding) - Math.abs(dx);
+        const overlapY = heightA / 2 + padding + (heightB / 2 + padding) - Math.abs(dy);
+        if (overlapX > 0 && overlapY > 0) {
+          if (overlapX < overlapY) {
+            const push = overlapX * 0.5 * k;
+            const direction = dx === 0 ? Math.random() - 0.5 : Math.sign(dx);
+            nodeA.vx -= push * direction;
+            nodeB.vx += push * direction;
+          } else {
+            const push = overlapY * 0.5 * k;
+            const direction = dy === 0 ? Math.random() - 0.5 : Math.sign(dy);
+            nodeA.vy -= push * direction;
+            nodeB.vy += push * direction;
+          }
+        }
+      }
+    }
+  }
+  force.initialize = function(_) {
+    nodes2 = _;
+  };
+  force.strength = function(_) {
+    return arguments.length ? (strength = _, force) : strength;
+  };
+  return force;
 }
 function updateEntityPositions() {
   if (!resourcePooling.g) return;
@@ -11838,10 +12502,12 @@ function createResourcePooling() {
   setupZoomBehavior2();
   resourcePooling.svg.append("defs");
   initForceSimulation();
+  createLegend2();
   window.addEventListener("resize", () => {
     const newWidth = resourcePoolingDiv.clientWidth;
     const newHeight = window.innerHeight * 0.6;
     resourcePooling.svg.style("width", newWidth).attr("height", newHeight);
+    createLegend2();
   });
 }
 function setupZoomBehavior2() {
@@ -11854,6 +12520,10 @@ function setupZoomBehavior2() {
     });
   });
   resourcePooling.svg.call(zoom);
+  resourcePooling.svg.call(
+    zoom.transform,
+    d3.zoomIdentity.scale(CONFIG2.initialScale)
+  );
 }
 function clearResourcePooling() {
   if (resourcePooling.g) {
@@ -11867,10 +12537,55 @@ function clearResourcePooling() {
     }
   }
 }
+function createLegend2() {
+  resourcePooling.svg.select(".legend").remove();
+  const svgHeight = parseFloat(resourcePooling.svg.attr("height"));
+  const legendHeight = 240;
+  const yOffset = (svgHeight - legendHeight) / 2;
+  const legendGroup = resourcePooling.svg.append("g").attr("class", "legend").attr("transform", `translate(15, ${yOffset})`);
+  const legendWidth = 120;
+  legendGroup.append("rect").attr("width", legendWidth).attr("height", legendHeight).attr("fill", "rgba(255, 255, 255, 0.95)").attr("stroke", "#374151").attr("stroke-width", 1).attr("rx", 3);
+  legendGroup.append("text").attr("x", legendWidth / 2).attr("y", 16).attr("text-anchor", "middle").style("font-family", STYLES2.fontFamily).style("font-size", "11px").style("font-weight", "bold").style("fill", "#1f2937").text("LEGEND");
+  let yPos = 32;
+  legendGroup.append("text").attr("x", 10).attr("y", yPos).style("font-family", STYLES2.fontFamily).style("font-size", "9px").style("font-weight", "bold").style("fill", "#374151").text("Entities:");
+  yPos += 14;
+  Object.entries(ENTITY_COLOURS).forEach(([type, colors]) => {
+    if (type === "") return;
+    legendGroup.append("rect").attr("x", 10).attr("y", yPos - 8).attr("width", 18).attr("height", 12).attr("fill", colors.fill).attr("stroke", colors.stroke).attr("stroke-width", 1).attr("rx", 1);
+    legendGroup.append("text").attr("x", 32).attr("y", yPos).style("font-family", STYLES2.fontFamily).style("font-size", "8px").style("fill", "#374151").text(type);
+    yPos += 15;
+  });
+  yPos += 5;
+  legendGroup.append("text").attr("x", 10).attr("y", yPos).style("font-family", STYLES2.fontFamily).style("font-size", "9px").style("font-weight", "bold").style("fill", "#374151").text("Value Activity:");
+  yPos += 14;
+  const activityBadge = legendGroup.append("g").attr("transform", `translate(10, ${yPos - 8})`);
+  activityBadge.append("rect").attr("width", 50).attr("height", 12).attr("rx", 6).style("fill", "#ffffff").style("fill-opacity", "0.7").style("stroke", "#000000").style("stroke-width", 0.75);
+  activityBadge.append("text").attr("x", 25).attr("y", 8).attr("text-anchor", "middle").style("font-family", STYLES2.fontFamily).style("font-size", "7px").style("fill", "#000000").text("Activity");
+  yPos += 20;
+  legendGroup.append("text").attr("x", 10).attr("y", yPos).style("font-family", STYLES2.fontFamily).style("font-size", "9px").style("font-weight", "bold").style("fill", "#374151").text("Flows:");
+  yPos += 14;
+  Object.entries(FLOW_COLORS).forEach(([type, color]) => {
+    legendGroup.append("line").attr("x1", 10).attr("y1", yPos - 3).attr("x2", 28).attr("y2", yPos - 3).attr("stroke", color).attr("stroke-width", 1.5);
+    legendGroup.append("text").attr("x", 32).attr("y", yPos).style("font-family", STYLES2.fontFamily).style("font-size", "8px").style("fill", "#374151").text(type);
+    yPos += 13;
+  });
+  yPos += 5;
+  const arrowGroup1 = legendGroup.append("g");
+  arrowGroup1.append("line").attr("x1", 10).attr("y1", yPos - 3).attr("x2", 28).attr("y2", yPos - 3).attr("stroke", "#4b5563").attr("stroke-width", 1).attr("marker-end", "url(#legend-arrow)");
+  arrowGroup1.append("text").attr("x", 32).attr("y", yPos).style("font-family", STYLES2.fontFamily).style("font-size", "8px").style("fill", "#374151").text("Direction");
+  yPos += 13;
+  legendGroup.append("line").attr("x1", 10).attr("y1", yPos - 3).attr("x2", 28).attr("y2", yPos - 3).attr("stroke", "#4b5563").attr("stroke-width", 1).attr("stroke-dasharray", "3,2");
+  legendGroup.append("text").attr("x", 32).attr("y", yPos).style("font-size", "8px").style("fill", "#374151").text("Future");
+  const defs = resourcePooling.svg.select("defs");
+  if (!defs.select("#legend-arrow").empty()) {
+    defs.select("#legend-arrow").remove();
+  }
+  defs.append("marker").attr("id", "legend-arrow").attr("viewBox", "0 -5 10 10").attr("refX", 8).attr("refY", 0).attr("markerWidth", 3).attr("markerHeight", 3).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#4b5563");
+}
 
 // build/dev/javascript/viz/components/resource_pooling.mjs
 var Model2 = class extends CustomType {
-  constructor(materials, entities, flows, form3, current_form, next_material_id, next_entity_id, next_flow_id, selected_material_ids, value_activities) {
+  constructor(materials, entities, flows, form3, current_form, next_material_id, next_entity_id, next_flow_id, selected_material_ids, value_activities, actions) {
     super();
     this.materials = materials;
     this.entities = entities;
@@ -11882,6 +12597,7 @@ var Model2 = class extends CustomType {
     this.next_flow_id = next_flow_id;
     this.selected_material_ids = selected_material_ids;
     this.value_activities = value_activities;
+    this.actions = actions;
   }
 };
 var StartEntityForm = class extends CustomType {
@@ -11992,6 +12708,14 @@ var ImportModel2 = class extends CustomType {
     this.json_data = json_data;
   }
 };
+var Undo2 = class extends CustomType {
+};
+var ResetForm2 = class extends CustomType {
+};
+var ExportMap2 = class extends CustomType {
+};
+var ClearMap2 = class extends CustomType {
+};
 var Entity = class extends CustomType {
   constructor(name2, entity_id, value_activities, materials, entity_type) {
     super();
@@ -12000,6 +12724,13 @@ var Entity = class extends CustomType {
     this.value_activities = value_activities;
     this.materials = materials;
     this.entity_type = entity_type;
+  }
+};
+var EntityPosition = class extends CustomType {
+  constructor(x, y) {
+    super();
+    this.x = x;
+    this.y = y;
   }
 };
 var Material = class extends CustomType {
@@ -12076,6 +12807,53 @@ var FlowFormData = class extends CustomType {
 };
 var EmptyForm2 = class extends CustomType {
 };
+var NewEntity = class extends CustomType {
+  constructor(entity) {
+    super();
+    this.entity = entity;
+  }
+};
+var EditEntity = class extends CustomType {
+  constructor(new$9, previous) {
+    super();
+    this.new = new$9;
+    this.previous = previous;
+  }
+};
+var RemoveEntity = class extends CustomType {
+  constructor(entity, deleted_flows, position) {
+    super();
+    this.entity = entity;
+    this.deleted_flows = deleted_flows;
+    this.position = position;
+  }
+};
+var NewFlow = class extends CustomType {
+  constructor(flow) {
+    super();
+    this.flow = flow;
+  }
+};
+var EditFlow = class extends CustomType {
+  constructor(new$9, previous) {
+    super();
+    this.new = new$9;
+    this.previous = previous;
+  }
+};
+var RemoveFlow = class extends CustomType {
+  constructor(flow) {
+    super();
+    this.flow = flow;
+  }
+};
+var ResetMap2 = class extends CustomType {
+  constructor(previous_model, positions) {
+    super();
+    this.previous_model = previous_model;
+    this.positions = positions;
+  }
+};
 function inspect3(thing) {
   let _pipe = inspect2(thing);
   return console_log(_pipe);
@@ -12126,7 +12904,11 @@ function update_existing_entity(model, entity_id, name2, entity_type) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        prepend(
+          new EditEntity(original_entity, updated_entity),
+          model.actions
+        )
       );
       return new Ok([updated_entity, updated_model]);
     }
@@ -12168,19 +12950,6 @@ function entity_decoder() {
               );
             }
           );
-        }
-      );
-    }
-  );
-}
-function get_materials_by_ids(model, material_ids) {
-  return filter_map(
-    material_ids,
-    (id2) => {
-      return find2(
-        model.materials,
-        (material) => {
-          return material.material_id === id2;
         }
       );
     }
@@ -12263,7 +13032,8 @@ function update_existing_flow(model, flow_id, entity_id_1, entity_id_2, material
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        prepend(new EditFlow(original_flow, updated_flow), model.actions)
       );
       return new Ok([updated_flow, updated_model]);
     }
@@ -12375,8 +13145,7 @@ function new_entity_form() {
           "entity-type",
           (() => {
             let _pipe = parse_string;
-            let _pipe$1 = check_not_empty(_pipe);
-            return check(_pipe$1, check_valid_entity_type);
+            return check(_pipe, check_valid_entity_type);
           })(),
           (entity_type) => {
             return success2(new EntityFormData(name2, entity_type));
@@ -12573,7 +13342,8 @@ function edit_flow_form(flow, model) {
     model.next_entity_id,
     model.next_flow_id,
     model.selected_material_ids,
-    model.value_activities
+    model.value_activities,
+    model.actions
   );
   let _block;
   let $ = find2(
@@ -13032,7 +13802,7 @@ function render_entity_type_selection(form3) {
                   return toList([value("")]);
                 }
               })(),
-              "Select entity type..."
+              "(none)"
             ),
             map(
               entity_types(),
@@ -13181,79 +13951,6 @@ function render_flow_options(form3, flow_type) {
     ])
   );
 }
-function render_materials_selection(model, materials, selected_material_ids) {
-  let selected_materials = get_materials_by_ids(model, selected_material_ids);
-  return div(
-    toList([class$("py-2")]),
-    toList([
-      label(toList([]), toList([text2("Select Materials:")])),
-      div(
-        toList([]),
-        map(
-          selected_materials,
-          (material) => {
-            return span(
-              toList([
-                class$(
-                  "inline-flex items-center rounded-md bg-green-400/10 px-2 py-1 text-xs font-medium text-green-400 ring-1 ring-inset ring-green-500/20 cursor-pointer mr-2"
-                ),
-                on_click(
-                  new RemoveSelectedMaterial(material.material_id)
-                )
-              ]),
-              toList([
-                text2(material.name),
-                svg(
-                  toList([
-                    attribute2("viewBox", "0 0 24 24"),
-                    attribute2("fill", "none"),
-                    attribute2("stroke", "currentColor"),
-                    attribute2("stroke-width", "1.5"),
-                    class$("ml-1 size-4")
-                  ]),
-                  toList([
-                    path(
-                      toList([
-                        attribute2("stroke-linecap", "round"),
-                        attribute2("stroke-linejoin", "round"),
-                        attribute2("d", "M6 18 18 6M6 6l12 12")
-                      ])
-                    )
-                  ])
-                )
-              ])
-            );
-          }
-        )
-      ),
-      select(
-        toList([
-          class$("w-full bg-gray-200 text-gray-700 rounded-sm px-2 py-1 mt-2"),
-          on_change((var0) => {
-            return new SelectMaterial(var0);
-          }),
-          name("select-material"),
-          value("")
-        ]),
-        prepend(
-          option(toList([value("")]), "Select a material..."),
-          (() => {
-            let _pipe = map(
-              materials,
-              (material) => {
-                return option(
-                  toList([value(material.material_id)]),
-                  material.name
-                );
-              }
-            );
-            return reverse(_pipe);
-          })()
-        )
-      )
-    ])
-  );
-}
 function render_submit_button2(current_form, form_id) {
   let _block;
   if (current_form instanceof NewEntityForm) {
@@ -13280,6 +13977,53 @@ function render_submit_button2(current_form, form_id) {
         ]),
         toList([text2(button_text)])
       )
+    ])
+  );
+}
+function render_entity_form(form3, model) {
+  let handle_submit = (values3) => {
+    let _pipe = form3;
+    let _pipe$1 = add_values(_pipe, values3);
+    let _pipe$2 = run2(_pipe$1);
+    return new EntityFormSubmit(_pipe$2);
+  };
+  return div(
+    toList([class$("flex-1 py-2")]),
+    toList([
+      form2(
+        toList([on_submit(handle_submit), id("main-entity-form")]),
+        toList([
+          render_input_field2(form3, "name", "Name"),
+          render_entity_type_selection(form3)
+        ])
+      ),
+      form2(
+        toList([
+          on_submit((var0) => {
+            return new NewValueActivity(var0);
+          })
+        ]),
+        prepend(
+          label(toList([]), toList([text2("Value Activities:")])),
+          prepend(
+            render_new_item_field("new-value-activity", "new-value-activity"),
+            (() => {
+              let _pipe = map_fold(
+                model.value_activities,
+                0,
+                (acc, activity) => {
+                  return [
+                    acc + 1,
+                    render_existing_value_activity(activity, acc)
+                  ];
+                }
+              )[1];
+              return reverse(_pipe);
+            })()
+          )
+        )
+      ),
+      render_submit_button2(model.current_form, "main-entity-form")
     ])
   );
 }
@@ -13312,59 +14056,6 @@ function render_delete_button2(current_form) {
       toList([text2(label2)])
     );
   }
-}
-function render_entity_form(form3, model) {
-  let handle_submit = (values3) => {
-    let _pipe = form3;
-    let _pipe$1 = add_values(_pipe, values3);
-    let _pipe$2 = run2(_pipe$1);
-    return new EntityFormSubmit(_pipe$2);
-  };
-  return div(
-    toList([class$("flex-1 py-2")]),
-    toList([
-      form2(
-        toList([on_submit(handle_submit), id("main-entity-form")]),
-        toList([
-          render_input_field2(form3, "name", "Name"),
-          render_entity_type_selection(form3),
-          render_materials_selection(
-            model,
-            model.materials,
-            model.selected_material_ids
-          )
-        ])
-      ),
-      form2(
-        toList([
-          on_submit((var0) => {
-            return new NewValueActivity(var0);
-          })
-        ]),
-        prepend(
-          label(toList([]), toList([text2("Value Activities:")])),
-          prepend(
-            render_new_item_field("new-value-activity", "new-value-activity"),
-            (() => {
-              let _pipe = map_fold(
-                model.value_activities,
-                0,
-                (acc, activity) => {
-                  return [
-                    acc + 1,
-                    render_existing_value_activity(activity, acc)
-                  ];
-                }
-              )[1];
-              return reverse(_pipe);
-            })()
-          )
-        )
-      ),
-      render_submit_button2(model.current_form, "main-entity-form"),
-      render_delete_button2(model.current_form)
-    ])
-  );
 }
 function render_flow_form(form3, model) {
   let handle_submit = (values3) => {
@@ -13417,28 +14108,106 @@ function render_form2(model) {
     return none2();
   }
 }
-function render_import_export_buttons2() {
+function render_undo2(model) {
+  let $ = model.actions;
+  if ($ instanceof Empty) {
+    return none2();
+  } else {
+    return button(
+      toList([
+        class$(
+          "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer"
+        ),
+        on_click(new Undo2()),
+        title("Undo")
+      ]),
+      toList([
+        svg(
+          toList([
+            attribute2("stroke-width", "1.5"),
+            attribute2("stroke", "currentColor"),
+            attribute2("fill", "none"),
+            class$("size-6")
+          ]),
+          toList([
+            path(
+              toList([
+                attribute2("stroke-linecap", "round"),
+                attribute2("stroke-linejoin", "round"),
+                attribute2("d", "M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3")
+              ])
+            )
+          ])
+        )
+      ])
+    );
+  }
+}
+function render_import_export_buttons2(model) {
   return div(
-    toList([class$("flex-1 mb-2")]),
+    toList([class$("flex gap-2 mb-2")]),
     toList([
       button(
         toList([
           class$(
             "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer"
           ),
+          title("Download File"),
           on_click(new DownloadModel2())
         ]),
-        toList([text2("Download")])
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                  )
+                ])
+              )
+            ])
+          )
+        ])
       ),
       label(
         toList([
           class$(
-            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer ml-2 inline-block"
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer inline-block"
           ),
-          for$("import-file")
+          title("Load File"),
+          for$("import-file"),
+          attribute2("tabindex", "0")
         ]),
         toList([
-          text2("Import"),
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+                  )
+                ])
+              )
+            ])
+          ),
           input(
             toList([
               id("import-file"),
@@ -13448,7 +14217,39 @@ function render_import_export_buttons2() {
             ])
           )
         ])
-      )
+      ),
+      button(
+        toList([
+          class$(
+            "bg-gray-600 hover:bg-gray-400 px-3 py-2 rounded-sm cursor-pointer"
+          ),
+          title("Export as PNG"),
+          on_click(new ExportMap2())
+        ]),
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+                  )
+                ])
+              )
+            ])
+          )
+        ])
+      ),
+      render_undo2(model)
     ])
   );
 }
@@ -13460,35 +14261,117 @@ function render_controls2(model) {
       )
     ]),
     toList([
-      render_import_export_buttons2(),
+      div(
+        toList([class$("text-sm mb-2")]),
+        toList([
+          text2(
+            "Hover over buttons for their descriptions. Selecting entities and flows on the diagram allows you to edit or delete them. Zoom and pan on the diagram to modify the view extent. Entities can be moved around and rearranged by dragging."
+          )
+        ])
+      ),
+      render_import_export_buttons2(model),
       button(
         toList([
           class$(
             "bg-blue-600 hover:bg-blue-400 px-3 py-2 rounded-sm cursor-pointer"
           ),
+          title("Add Entity"),
           on_click(new StartEntityForm(""))
         ]),
-        toList([text2("Entity")])
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2("d", "M12 4.5v15m7.5-7.5h-15")
+                ])
+              )
+            ])
+          )
+        ])
       ),
       button(
         toList([
           class$(
             "bg-green-600 hover:bg-green-400 px-3 py-2 rounded-sm cursor-pointer ml-2"
           ),
-          on_click(new StartMaterialsForm())
+          title("Add Flow"),
+          on_click(new StartFlowForm(""))
         ]),
-        toList([text2("Materials")])
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2(
+                    "d",
+                    "M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"
+                  )
+                ])
+              )
+            ])
+          )
+        ])
       ),
       button(
         toList([
           class$(
-            "bg-amber-600 hover:bg-amber-400 px-3 py-2 rounded-sm cursor-pointer ml-2"
+            "bg-red-600 hover:bg-red-400 px-3 py-2 rounded-sm cursor-pointer ml-2"
           ),
-          on_click(new StartFlowForm(""))
+          title("Clear Diagram"),
+          on_click(new ClearMap2())
         ]),
-        toList([text2("Flow")])
+        toList([
+          svg(
+            toList([
+              attribute2("stroke-width", "1.5"),
+              attribute2("stroke", "currentColor"),
+              attribute2("fill", "none"),
+              class$("size-6")
+            ]),
+            toList([
+              path(
+                toList([
+                  attribute2("stroke-linecap", "round"),
+                  attribute2("stroke-linejoin", "round"),
+                  attribute2("d", "M6 18 18 6M6 6l12 12")
+                ])
+              )
+            ])
+          )
+        ])
       ),
-      render_form2(model)
+      div(
+        toList([
+          class$("transition-all duration-300 ease-in-out"),
+          (() => {
+            let $ = model.current_form;
+            if ($ instanceof NoForm2) {
+              return class$("max-h-0 opacity-0");
+            } else {
+              return class$("max-h-256 opacity-100");
+            }
+          })()
+        ]),
+        toList([render_form2(model)])
+      ),
+      render_delete_button2(model.current_form)
     ])
   );
 }
@@ -13561,6 +14444,7 @@ function model_decoder2() {
                               next_entity_id,
                               next_flow_id,
                               toList([]),
+                              toList([]),
                               toList([])
                             )
                           );
@@ -13588,7 +14472,8 @@ function reset_form2(model) {
     model.next_entity_id,
     model.next_flow_id,
     model.selected_material_ids,
-    model.value_activities
+    model.value_activities,
+    model.actions
   );
 }
 function serialise_material(material) {
@@ -13669,7 +14554,24 @@ function init2(_) {
         }
       };
       setDispatch2(dispatch_wrapper);
-      return setupFileImport2(dispatch_wrapper);
+      setupFileImport2(dispatch_wrapper);
+      let _pipe = dispatch;
+      return install_keyboard_shortcuts(
+        _pipe,
+        new KeyDown(),
+        toList([
+          new Shortcut(
+            toList([new Key2("Escape")]),
+            new ResetForm2(),
+            toList([new PreventDefault()])
+          ),
+          new Shortcut(
+            toList([new Modifier(), new Key2("z")]),
+            new Undo2(),
+            toList([new PreventDefault()])
+          )
+        ])
+      );
     }
   );
   return [
@@ -13683,10 +14585,28 @@ function init2(_) {
       1,
       1,
       toList([]),
+      toList([]),
       toList([])
     ),
     init_effect
   ];
+}
+function get_entity_position(entity_id) {
+  let position = getEntityPosition(entity_id);
+  let decoder = field(
+    "x",
+    float2,
+    (x) => {
+      return field(
+        "y",
+        float2,
+        (y) => {
+          return success(new EntityPosition(x, y));
+        }
+      );
+    }
+  );
+  return run(position, decoder);
 }
 function update3(model, message) {
   inspect3(message);
@@ -13704,7 +14624,8 @@ function update3(model, message) {
           model.next_entity_id,
           model.next_flow_id,
           toList([]),
-          toList([])
+          toList([]),
+          model.actions
         ),
         none()
       ];
@@ -13733,7 +14654,8 @@ function update3(model, message) {
             model.next_entity_id,
             model.next_flow_id,
             entity.materials,
-            entity.value_activities
+            entity.value_activities,
+            model.actions
           ),
           none()
         ];
@@ -13751,7 +14673,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       ),
       none()
     ];
@@ -13769,7 +14692,8 @@ function update3(model, message) {
           model.next_entity_id,
           model.next_flow_id,
           toList([]),
-          toList([])
+          toList([]),
+          model.actions
         ),
         none()
       ];
@@ -13798,7 +14722,8 @@ function update3(model, message) {
             model.next_entity_id,
             model.next_flow_id,
             model.selected_material_ids,
-            model.value_activities
+            model.value_activities,
+            model.actions
           ),
           none()
         ];
@@ -13871,7 +14796,8 @@ function update3(model, message) {
               model.next_entity_id,
               model.next_flow_id + 1,
               toList([]),
-              toList([])
+              toList([]),
+              prepend(new NewFlow(new_flow), model.actions)
             ),
             none()
           ];
@@ -13918,7 +14844,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       );
       return [updated_model, none()];
     }
@@ -13941,7 +14868,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       ),
       none()
     ];
@@ -13971,7 +14899,8 @@ function update3(model, message) {
             model.next_entity_id,
             model.next_flow_id,
             toList([]),
-            toList([])
+            toList([]),
+            model.actions
           ),
           none()
         ];
@@ -13990,7 +14919,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       );
       return [updated_model, none()];
     }
@@ -14020,7 +14950,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       ),
       none()
     ];
@@ -14052,7 +14983,8 @@ function update3(model, message) {
               model.next_entity_id + 1,
               model.next_flow_id,
               toList([]),
-              toList([])
+              toList([]),
+              prepend(new NewEntity(new_entity), model.actions)
             ),
             none()
           ];
@@ -14085,7 +15017,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       );
       return [updated_model, none()];
     }
@@ -14107,7 +15040,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         updated_selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       ),
       none()
     ];
@@ -14130,7 +15064,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         updated_selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       ),
       none()
     ];
@@ -14157,7 +15092,8 @@ function update3(model, message) {
             model.selected_material_ids,
             unique(
               prepend(new_value_activity, model.value_activities)
-            )
+            ),
+            model.actions
           ),
           none()
         ];
@@ -14190,7 +15126,8 @@ function update3(model, message) {
               }
             }
           );
-        })()
+        })(),
+        model.actions
       ),
       none()
     ];
@@ -14212,7 +15149,8 @@ function update3(model, message) {
           (act) => {
             return act !== activity;
           }
-        )
+        ),
+        model.actions
       ),
       none()
     ];
@@ -14221,6 +15159,7 @@ function update3(model, message) {
     let $ = get_entity_by_id(model, entity_id);
     if ($ instanceof Ok) {
       let entity = $[0];
+      let position = get_entity_position(entity_id);
       let updated_entities = filter(
         model.entities,
         (entity2) => {
@@ -14250,7 +15189,11 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        prepend(
+          new RemoveEntity(entity, connected_flows, position),
+          model.actions
+        )
       );
       _block = reset_form2(_pipe);
       let updated_model = _block;
@@ -14329,7 +15272,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       ),
       none()
     ];
@@ -14388,7 +15332,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        model.actions
       ),
       none()
     ];
@@ -14414,7 +15359,8 @@ function update3(model, message) {
         model.next_entity_id,
         model.next_flow_id,
         model.selected_material_ids,
-        model.value_activities
+        model.value_activities,
+        prepend(new RemoveFlow(flow), model.actions)
       );
       _block = reset_form2(_pipe);
       let updated_model = _block;
@@ -14427,14 +15373,14 @@ function update3(model, message) {
     let model_data = serialise_model2(model);
     downloadModelData2(model_data);
     return [model, none()];
-  } else {
+  } else if (message instanceof ImportModel2) {
     let json_data = message.json_data;
     let $ = deserialise_model2(json_data);
     if ($ instanceof Ok) {
       let imported_model = $[0];
       let recreation_effect = from(
         (_) => {
-          return restoreD3StateAfterImport(
+          return restoreD3State2(
             imported_model.entities,
             imported_model.materials,
             imported_model.flows
@@ -14445,6 +15391,246 @@ function update3(model, message) {
     } else {
       return [model, none()];
     }
+  } else if (message instanceof Undo2) {
+    let $ = model.actions;
+    if ($ instanceof Empty) {
+      return [model, none()];
+    } else {
+      let $1 = $.head;
+      if ($1 instanceof NewEntity) {
+        let rest_actions = $.tail;
+        let entity = $1.entity;
+        let updated_entities = filter(
+          model.entities,
+          (e) => {
+            return e.entity_id !== entity.entity_id;
+          }
+        );
+        let _block;
+        let _pipe = new Model2(
+          model.materials,
+          updated_entities,
+          model.flows,
+          model.form,
+          model.current_form,
+          model.next_material_id,
+          model.next_entity_id,
+          model.next_flow_id,
+          model.selected_material_ids,
+          model.value_activities,
+          rest_actions
+        );
+        _block = reset_form2(_pipe);
+        let updated_model = _block;
+        deleteEntity(entity.entity_id);
+        return [updated_model, none()];
+      } else if ($1 instanceof EditEntity) {
+        let rest_actions = $.tail;
+        let original = $1.new;
+        let updated_entities = map(
+          model.entities,
+          (entity) => {
+            let $2 = entity.entity_id === original.entity_id;
+            if ($2) {
+              return original;
+            } else {
+              return entity;
+            }
+          }
+        );
+        let _block;
+        let _pipe = new Model2(
+          model.materials,
+          updated_entities,
+          model.flows,
+          model.form,
+          model.current_form,
+          model.next_material_id,
+          model.next_entity_id,
+          model.next_flow_id,
+          model.selected_material_ids,
+          model.value_activities,
+          rest_actions
+        );
+        _block = reset_form2(_pipe);
+        let updated_model = _block;
+        editEntity(original, model.materials);
+        return [updated_model, none()];
+      } else if ($1 instanceof RemoveEntity) {
+        let rest_actions = $.tail;
+        let entity = $1.entity;
+        let deleted_flows = $1.deleted_flows;
+        let position = $1.position;
+        let _block;
+        let _pipe = new Model2(
+          model.materials,
+          prepend(entity, model.entities),
+          append(deleted_flows, model.flows),
+          model.form,
+          model.current_form,
+          model.next_material_id,
+          model.next_entity_id,
+          model.next_flow_id,
+          model.selected_material_ids,
+          model.value_activities,
+          rest_actions
+        );
+        _block = reset_form2(_pipe);
+        let updated_model = _block;
+        if (position instanceof Ok) {
+          let pos = position[0];
+          createEntity(entity, model.materials, pos.x, pos.y);
+        } else {
+          createEntity(entity, model.materials);
+        }
+        each(deleted_flows, (flow) => {
+          return createFlow(flow);
+        });
+        return [updated_model, none()];
+      } else if ($1 instanceof NewFlow) {
+        let rest_actions = $.tail;
+        let flow = $1.flow;
+        let updated_flows = filter(
+          model.flows,
+          (f) => {
+            return f.flow_id !== flow.flow_id;
+          }
+        );
+        let _block;
+        let _pipe = new Model2(
+          model.materials,
+          model.entities,
+          updated_flows,
+          model.form,
+          model.current_form,
+          model.next_material_id,
+          model.next_entity_id,
+          model.next_flow_id,
+          model.selected_material_ids,
+          model.value_activities,
+          rest_actions
+        );
+        _block = reset_form2(_pipe);
+        let updated_model = _block;
+        deleteFlow(flow.flow_id);
+        return [updated_model, none()];
+      } else if ($1 instanceof EditFlow) {
+        let rest_actions = $.tail;
+        let original = $1.new;
+        let updated_flows = map(
+          model.flows,
+          (f) => {
+            let $2 = f.flow_id === original.flow_id;
+            if ($2) {
+              return original;
+            } else {
+              return f;
+            }
+          }
+        );
+        let _block;
+        let _pipe = new Model2(
+          model.materials,
+          model.entities,
+          updated_flows,
+          model.form,
+          model.current_form,
+          model.next_material_id,
+          model.next_entity_id,
+          model.next_flow_id,
+          model.selected_material_ids,
+          model.value_activities,
+          rest_actions
+        );
+        _block = reset_form2(_pipe);
+        let updated_model = _block;
+        editFlow(original);
+        return [updated_model, none()];
+      } else if ($1 instanceof RemoveFlow) {
+        let rest_actions = $.tail;
+        let flow = $1.flow;
+        let _block;
+        let _pipe = new Model2(
+          model.materials,
+          model.entities,
+          prepend(flow, model.flows),
+          model.form,
+          model.current_form,
+          model.next_material_id,
+          model.next_entity_id,
+          model.next_flow_id,
+          model.selected_material_ids,
+          model.value_activities,
+          rest_actions
+        );
+        _block = reset_form2(_pipe);
+        let updated_model = _block;
+        createFlow(flow);
+        return [updated_model, none()];
+      } else {
+        let previous_model = $1.previous_model;
+        let positions = $1.positions;
+        let recreation_effect = from(
+          (_) => {
+            restoreD3State2(
+              previous_model.entities,
+              previous_model.materials,
+              previous_model.flows
+            );
+            each(
+              positions,
+              (pair) => {
+                let entity_id;
+                let position_result;
+                entity_id = pair[0];
+                position_result = pair[1];
+                if (position_result instanceof Ok) {
+                  let pos = position_result[0];
+                  return setEntityPosition(entity_id, pos.x, pos.y);
+                } else {
+                  return void 0;
+                }
+              }
+            );
+            return centreViewOnNodes();
+          }
+        );
+        return [previous_model, recreation_effect];
+      }
+    }
+  } else if (message instanceof ResetForm2) {
+    let updated_model = reset_form2(model);
+    return [updated_model, none()];
+  } else if (message instanceof ExportMap2) {
+    exportMapAsPNG2();
+    return [model, none()];
+  } else {
+    let entity_positions = map(
+      model.entities,
+      (entity) => {
+        let position = get_entity_position(entity.entity_id);
+        return [entity.entity_id, position];
+      }
+    );
+    let empty_model2 = new Model2(
+      toList([]),
+      toList([]),
+      toList([]),
+      empty_form2(),
+      new NoForm2(),
+      1,
+      1,
+      1,
+      toList([]),
+      toList([]),
+      prepend(new ResetMap2(model, entity_positions), model.actions)
+    );
+    let recreation_effect = from(
+      (_) => {
+        return restoreD3State2(toList([]), toList([]), toList([]));
+      }
+    );
+    return [empty_model2, recreation_effect];
   }
 }
 function register2() {
@@ -14468,11 +15654,11 @@ var ResourcePooling = class extends CustomType {
 var ToggleMenu = class extends CustomType {
 };
 function init3(_) {
-  return new Model3("Flow Map", true);
+  return new Model3("Trade Flow Map", true);
 }
 function update4(model, message) {
   if (message instanceof FlowMap) {
-    return new Model3("Flow Map", model.show_menu);
+    return new Model3("Trade Flow Map", model.show_menu);
   } else if (message instanceof ResourcePooling) {
     return new Model3("Resource Pooling", model.show_menu);
   } else {
@@ -14570,10 +15756,10 @@ function view3(model) {
             toList([
               a(
                 toList([
-                  link_class("Flow Map", model),
+                  link_class("Trade Flow Map", model),
                   on_click(new FlowMap())
                 ]),
-                toList([text2("Flow Map")])
+                toList([text2("Trade Flow Map")])
               ),
               a(
                 toList([
@@ -14587,13 +15773,13 @@ function view3(model) {
         ])
       ),
       div(
-        toList([class$("flex flex-col px-12 flex-1 min-w-0")]),
+        toList([class$("flex flex-col px-6 flex-1 min-w-0")]),
         toList([
           div(
             toList([class$("flex-1 w-full py-4")]),
             toList([
               div(
-                toList([content_class(model, "Flow Map")]),
+                toList([content_class(model, "Trade Flow Map")]),
                 toList([element4()])
               ),
               div(
